@@ -139,6 +139,9 @@ function renderPrediction() {
           <dt>引っ張り</dt><dd>直近5回の抽選で何回出たかを加重評価。最新回ほど重く計算し、連続出現の勢いを測る。</dd>
           <dt>ペア相性</dt><dd>選出済みの他の数字と過去に同時に出た回数。全期間60%＋直近200回40%の混合評価。</dd>
           <dt>連番傾向</dt><dd>隣り合う数字（例: 14と15）が一緒に出やすい傾向があるかの指標。</dd>
+          <dt>N回周期</dt><dd>各数字が「だいたいN回おきに出る」という周期パターンを検出。次の出現タイミングに近いほどスコアが高い。</dd>
+          <dt>ランダムフォレスト</dt><dd>機械学習モデル。過去の出現パターン（直近20回の出現履歴、出現率、間隔等）から次回の出現確率を予測。100本の決定木の多数決で判断。</dd>
+          <dt>LSTM</dt><dd>時系列ディープラーニングモデル。各数字の出現/未出現の時系列データを学習し、パターンの「流れ」から次回の出現確率を予測。</dd>
           <dt>奇偶比率</dt><dd>6個中の奇数と偶数の内訳。過去データでは3:3〜4:2が多い。</dd>
           <dt>数字帯</dt><dd>低帯(1-14)・中帯(15-29)・高帯(30-43)の3グループの内訳。各帯から最低1個、最大3個選出。</dd>
           <dt>合計値</dt><dd>6個の合計。${periodLabel}の平均±1標準偏差の範囲（${sumRange}）に収まるよう制約。</dd>
@@ -453,4 +456,98 @@ function renderRecent() {
       <tbody>${rows}</tbody>
     </table>
   `;
+}
+
+// ============================================================
+// PDF Export
+// ============================================================
+function exportPDF() {
+  const periods = analysisData.periods;
+  const periodLabels = analysisData.period_labels;
+  const latestRound = analysisData.latest_round;
+  const nextRound = latestRound + 1;
+  const updatedDate = analysisData.last_updated.split("T")[0];
+
+  let html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>LOTO6 ANALYZER - 予想レポート</title>
+<style>
+  @page { size: A4; margin: 15mm; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif; color: #222; font-size: 11px; line-height: 1.5; }
+  h1 { text-align: center; font-size: 20px; margin-bottom: 4px; }
+  .subtitle { text-align: center; color: #666; font-size: 11px; margin-bottom: 12px; }
+  .meta { text-align: center; color: #888; font-size: 10px; margin-bottom: 16px; border-bottom: 2px solid #FFD700; padding-bottom: 8px; }
+  .period-section { margin-bottom: 16px; page-break-inside: avoid; }
+  .period-title { background: #1a1a2e; color: #FFD700; padding: 5px 10px; font-size: 13px; font-weight: bold; border-radius: 4px; margin-bottom: 8px; }
+  .mode-block { margin-bottom: 10px; padding: 8px; border: 1px solid #ddd; border-radius: 6px; page-break-inside: avoid; }
+  .mode-name { font-weight: bold; font-size: 12px; color: #1a1a2e; margin-bottom: 4px; }
+  .numbers { display: flex; gap: 6px; align-items: center; margin-bottom: 4px; flex-wrap: wrap; }
+  .ball { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; font-size: 13px; font-weight: bold; }
+  .ball-main { background: #FFD700; color: #1a1a2e; }
+  .ball-bonus { background: #fff; color: #FFD700; border: 2px solid #FFD700; }
+  .plus { color: #999; font-size: 14px; }
+  .metrics { color: #666; font-size: 10px; margin-bottom: 4px; }
+  .reason { color: #444; font-size: 9.5px; line-height: 1.4; }
+  .reason b { color: #1a1a2e; }
+  .disclaimer { text-align: center; color: #999; font-size: 9px; margin-top: 16px; padding-top: 8px; border-top: 1px solid #ddd; }
+  @media print { .no-print { display: none; } }
+</style></head><body>`;
+
+  html += `<h1>LOTO6 ANALYZER</h1>`;
+  html += `<p class="subtitle">統計分析 × AI予想レポート</p>`;
+  html += `<p class="meta">第${nextRound}回予想 ｜ データ最終更新: ${updatedDate} ｜ 分析対象: 第1回〜第${latestRound}回</p>`;
+
+  // 各期間
+  for (const pInfo of periodLabels) {
+    const pKey = pInfo.key;
+    const pData = periods[pKey];
+    if (!pData) continue;
+
+    html += `<div class="period-section">`;
+    html += `<div class="period-title">${pInfo.label}（${pInfo.range} / ${pInfo.draws}回分）</div>`;
+
+    const modes = ["balanced", "frequency_heavy", "pull_heavy", "zone_balanced", "pair_heavy", "ml_heavy"];
+    for (const mode of modes) {
+      const pred = pData.predictions[mode];
+      if (!pred) continue;
+
+      const balls = pred.numbers.map(n => `<span class="ball ball-main">${n}</span>`).join("");
+      const bonus = pred.bonus ? `<span class="plus">+</span><span class="ball ball-bonus">${pred.bonus}</span>` : "";
+      const m = pred.metrics;
+
+      let reasonLines = pred.numbers.map(n => {
+        const r = pred.reasons[String(n)];
+        return r ? `<b>${n}</b>: ${r.reason_text}` : "";
+      }).filter(x => x).join(" / ");
+
+      if (pred.bonus && pred.bonus_reason) {
+        reasonLines += ` / <b>B${pred.bonus}</b>: ${pred.bonus_reason}`;
+      }
+
+      html += `<div class="mode-block">`;
+      html += `<div class="mode-name">${pred.mode_name}</div>`;
+      html += `<div class="numbers">${balls} ${bonus}</div>`;
+      html += `<div class="metrics">奇偶: ${m.odd_even} ｜ 帯: ${m.zones} ｜ 合計: ${m.sum} ｜ 範囲: ${m.sum_range || ""}</div>`;
+      html += `<div class="reason">${reasonLines}</div>`;
+      html += `</div>`;
+    }
+
+    html += `</div>`;
+  }
+
+  html += `<p class="disclaimer">本ツールは過去の抽選データに基づく統計分析であり、将来の当選を予測・保証するものではありません。宝くじの購入は自己責任でお願いします。</p>`;
+  html += `</body></html>`;
+
+  // HTMLファイルとしてダウンロード（ブラウザで開いてPDF保存可能）
+  const blob = new Blob([html], { type: "text/html; charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `LOTO6_予想レポート_第${nextRound}回_${updatedDate}.html`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  alert("HTMLファイルがダウンロードされました。\\nブラウザで開いて「ファイル → PDFとして書き出す」でPDFに変換できます。");
 }

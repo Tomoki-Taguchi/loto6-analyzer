@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LOTO6 分析エンジン - 統計分析 + 予想生成（改善版v2）"""
+"""LOTO6 分析エンジン - 統計分析 + 予想生成（v3: 周期分析・RF・LSTM搭載）"""
 
 import json
 import math
@@ -8,6 +8,11 @@ from collections import Counter, defaultdict
 from datetime import date
 from itertools import combinations
 from pathlib import Path
+
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+import torch
+import torch.nn as nn
 
 DATA_PATH = Path(__file__).parent.parent / "docs" / "data" / "loto6_data.json"
 OUTPUT_PATH = Path(__file__).parent.parent / "docs" / "data" / "analysis.json"
@@ -227,14 +232,228 @@ def analyze_consecutive(draws):
 
 
 # ============================================================
-# 6. AI予想エンジン（改善版v2）
+# 6. N回周期分析
+# ============================================================
+def analyze_cycle(draws):
+    """各数字の出現周期を検出し、次回出現の期待度を算出"""
+    total_draws = len(draws)
+    current_round = draws[-1]["round"]
+
+    cycle_data = {}
+    for n in range(1, 44):
+        # 出現した回のリスト
+        appearances = [d["round"] for d in draws if n in d["numbers"]]
+        if len(appearances) < 3:
+            cycle_data[str(n)] = {
+                "dominant_cycle": None,
+                "cycle_score": 0.0,
+                "intervals": [],
+                "next_expected": None,
+            }
+            continue
+
+        # 出現間隔を計算
+        intervals = [appearances[i + 1] - appearances[i] for i in range(len(appearances) - 1)]
+        avg_interval = sum(intervals) / len(intervals)
+
+        # 最頻出の間隔（周期候補）を検出
+        interval_counter = Counter(intervals)
+        # 近い間隔をグルーピング（±1の範囲）
+        grouped = defaultdict(int)
+        for iv, cnt in interval_counter.items():
+            grouped[iv] += cnt
+        # 上位3つの周期候補
+        top_cycles = sorted(grouped.items(), key=lambda x: x[1], reverse=True)[:3]
+        dominant_cycle = top_cycles[0][0] if top_cycles else int(avg_interval)
+
+        # 最後の出現からの経過
+        since_last = current_round - appearances[-1]
+
+        # 周期スコア: 支配的周期に対してどれだけ「次に来そう」か
+        # 周期の倍数に近いほどスコアが高い
+        if dominant_cycle > 0:
+            remainder = since_last % dominant_cycle
+            closeness = 1.0 - (min(remainder, dominant_cycle - remainder) / (dominant_cycle / 2))
+            # 1周期以上経過でボーナス
+            cycle_multiplier = min(since_last / dominant_cycle, 2.0)
+            score = closeness * cycle_multiplier
+        else:
+            score = 0.0
+
+        next_expected = appearances[-1] + dominant_cycle
+
+        cycle_data[str(n)] = {
+            "dominant_cycle": dominant_cycle,
+            "cycle_score": round(score, 4),
+            "avg_interval": round(avg_interval, 1),
+            "since_last": since_last,
+            "next_expected": next_expected,
+            "top_cycles": [{"cycle": c, "count": cnt} for c, cnt in top_cycles[:3]],
+        }
+
+    return cycle_data
+
+
+# ============================================================
+# 7. ランダムフォレスト予測
+# ============================================================
+def build_rf_features(draws, target_idx, n):
+    """各数字について、特徴量と教師ラベルを構築"""
+    window = 20
+    if target_idx < window:
+        return None, None
+
+    features = []
+    # 直近window回の出現 (0/1)
+    for i in range(window):
+        features.append(1.0 if n in draws[target_idx - 1 - i]["numbers"] else 0.0)
+    # 直近5/10/20回の出現率
+    for w in [5, 10, 20]:
+        count = sum(1 for i in range(w) if n in draws[target_idx - 1 - i]["numbers"])
+        features.append(count / w)
+    # 最後に出てからの経過回数
+    since_last = 0
+    for i in range(target_idx - 1, -1, -1):
+        if n in draws[i]["numbers"]:
+            since_last = target_idx - 1 - i
+            break
+    features.append(since_last / 20.0)  # 正規化
+    # 前回出たか
+    features.append(1.0 if n in draws[target_idx - 1]["numbers"] else 0.0)
+
+    label = 1 if n in draws[target_idx]["numbers"] else 0
+    return features, label
+
+
+def predict_rf(draws):
+    """ランダムフォレストで各数字の次回出現確率を予測"""
+    print("  Training Random Forest...")
+    rf_scores = {}
+    window = 20
+
+    for n in range(1, 44):
+        X, y = [], []
+        for idx in range(window, len(draws)):
+            feat, label = build_rf_features(draws, idx, n)
+            if feat is not None:
+                X.append(feat)
+                y.append(label)
+
+        X = np.array(X)
+        y = np.array(y)
+
+        if len(set(y)) < 2:
+            rf_scores[n] = 0.5
+            continue
+
+        clf = RandomForestClassifier(
+            n_estimators=100,
+            max_depth=8,
+            random_state=42,
+            n_jobs=-1,
+        )
+        clf.fit(X, y)
+
+        # 次回の特徴量を作成して予測
+        next_feat, _ = build_rf_features(draws, len(draws) - 1, n)
+        if next_feat is None:
+            rf_scores[n] = 0.5
+            continue
+
+        # 最後のデータで次回を予測するために特徴量を再構築
+        feat = []
+        for i in range(window):
+            feat.append(1.0 if n in draws[len(draws) - 1 - i]["numbers"] else 0.0)
+        for w in [5, 10, 20]:
+            count = sum(1 for i in range(w) if n in draws[len(draws) - 1 - i]["numbers"])
+            feat.append(count / w)
+        since_last = 0
+        for i in range(len(draws) - 1, -1, -1):
+            if n in draws[i]["numbers"]:
+                since_last = len(draws) - 1 - i
+                break
+        feat.append(since_last / 20.0)
+        feat.append(1.0 if n in draws[-1]["numbers"] else 0.0)
+
+        prob = clf.predict_proba(np.array([feat]))[0]
+        rf_scores[n] = float(prob[1]) if len(prob) > 1 else 0.5
+
+    return rf_scores
+
+
+# ============================================================
+# 8. LSTM予測
+# ============================================================
+class LottoLSTM(nn.Module):
+    def __init__(self, input_size=1, hidden_size=32, num_layers=1):
+        super().__init__()
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+        self.fc = nn.Linear(hidden_size, 1)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        out, _ = self.lstm(x)
+        out = self.fc(out[:, -1, :])
+        return self.sigmoid(out)
+
+
+def predict_lstm(draws, seq_len=30, epochs=50):
+    """LSTMで各数字の次回出現確率を予測"""
+    print("  Training LSTM...")
+    torch.manual_seed(42)
+    lstm_scores = {}
+
+    for n in range(1, 44):
+        # 時系列データ作成: 各回で出現=1, 未出現=0
+        series = np.array([1.0 if n in d["numbers"] else 0.0 for d in draws], dtype=np.float32)
+
+        if len(series) < seq_len + 1:
+            lstm_scores[n] = 0.5
+            continue
+
+        # スライディングウィンドウでデータセット作成
+        X, y = [], []
+        for i in range(len(series) - seq_len):
+            X.append(series[i:i + seq_len])
+            y.append(series[i + seq_len])
+
+        X = torch.tensor(np.array(X)).unsqueeze(-1)  # (samples, seq_len, 1)
+        y = torch.tensor(np.array(y)).unsqueeze(-1)  # (samples, 1)
+
+        model = LottoLSTM(input_size=1, hidden_size=32)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.005)
+        criterion = nn.BCELoss()
+
+        # 学習
+        model.train()
+        for epoch in range(epochs):
+            optimizer.zero_grad()
+            output = model(X)
+            loss = criterion(output, y)
+            loss.backward()
+            optimizer.step()
+
+        # 次回の予測
+        model.eval()
+        with torch.no_grad():
+            last_seq = torch.tensor(series[-seq_len:]).unsqueeze(0).unsqueeze(-1)
+            prob = model(last_seq).item()
+
+        lstm_scores[n] = prob
+
+    return lstm_scores
+
+
+# ============================================================
+# 9. AI予想エンジン（v3: 10要素統合）
 # ============================================================
 MODES = {
-    "balanced":        {"freq": 0.25, "drought": 0.20, "pull": 0.15, "pair": 0.15, "consec": 0.10, "recent": 0.10, "random": 0.05},
-    "frequency_heavy": {"freq": 0.40, "drought": 0.10, "pull": 0.10, "pair": 0.10, "consec": 0.05, "recent": 0.15, "random": 0.10},
-    "pull_heavy":      {"freq": 0.15, "drought": 0.10, "pull": 0.35, "pair": 0.15, "consec": 0.10, "recent": 0.05, "random": 0.10},
-    "zone_balanced":   {"freq": 0.20, "drought": 0.20, "pull": 0.10, "pair": 0.15, "consec": 0.10, "recent": 0.10, "random": 0.15},
-    "pair_heavy":      {"freq": 0.15, "drought": 0.10, "pull": 0.10, "pair": 0.30, "consec": 0.10, "recent": 0.10, "random": 0.15},
+    "balanced":        {"freq": 0.15, "drought": 0.12, "pull": 0.10, "pair": 0.10, "consec": 0.05, "recent": 0.08, "cycle": 0.12, "rf": 0.12, "lstm": 0.12, "random": 0.04},
+    "frequency_heavy": {"freq": 0.30, "drought": 0.08, "pull": 0.07, "pair": 0.07, "consec": 0.03, "recent": 0.12, "cycle": 0.08, "rf": 0.08, "lstm": 0.08, "random": 0.09},
+    "pull_heavy":      {"freq": 0.10, "drought": 0.08, "pull": 0.28, "pair": 0.10, "consec": 0.05, "recent": 0.04, "cycle": 0.08, "rf": 0.09, "lstm": 0.09, "random": 0.09},
+    "zone_balanced":   {"freq": 0.12, "drought": 0.12, "pull": 0.07, "pair": 0.10, "consec": 0.05, "recent": 0.07, "cycle": 0.12, "rf": 0.10, "lstm": 0.10, "random": 0.15},
+    "pair_heavy":      {"freq": 0.10, "drought": 0.08, "pull": 0.07, "pair": 0.22, "consec": 0.05, "recent": 0.07, "cycle": 0.08, "rf": 0.10, "lstm": 0.10, "random": 0.13},
+    "ml_heavy":        {"freq": 0.08, "drought": 0.05, "pull": 0.05, "pair": 0.05, "consec": 0.02, "recent": 0.05, "cycle": 0.10, "rf": 0.25, "lstm": 0.25, "random": 0.10},
 }
 
 MODE_NAMES = {
@@ -243,6 +462,7 @@ MODE_NAMES = {
     "pull_heavy": "引っ張り重視",
     "zone_balanced": "数字帯バランス重視",
     "pair_heavy": "ペア重視",
+    "ml_heavy": "AI(RF+LSTM)重視",
 }
 
 
@@ -254,8 +474,8 @@ def normalize(values: dict) -> dict:
     return {k: (v - min_v) / rng for k, v in values.items()}
 
 
-def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data, draws, weights):
-    """1つの予想を生成（改善版v2）"""
+def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data, cycle_data, rf_scores_raw, lstm_scores_raw, draws, weights):
+    """1つの予想を生成（v3: 10要素統合）"""
     total_draws = len(draws)
 
     # --- スコア計算 ---
@@ -297,11 +517,20 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
         pull_scores[n] = weighted_pull
     pull_scores = normalize(pull_scores)
 
-    # ⑤ 連番スコア（改善: 新規追加）
+    # ⑤ 連番スコア
     consec_scores_raw = {n: consec_data["partner_counts"].get(str(n), 0) for n in range(1, 44)}
     consec_base_scores = normalize(consec_scores_raw)
 
-    # ペアカウント辞書（改善④: 全期間+直近を混合）
+    # ⑥ 周期スコア
+    cycle_scores = normalize({n: cycle_data.get(str(n), {}).get("cycle_score", 0) for n in range(1, 44)})
+
+    # ⑦ ランダムフォレストスコア
+    rf_scores = normalize({n: rf_scores_raw.get(n, 0.5) for n in range(1, 44)})
+
+    # ⑧ LSTMスコア
+    lstm_scores = normalize({n: lstm_scores_raw.get(n, 0.5) for n in range(1, 44)})
+
+    # ペアカウント辞書（全期間+直近を混合）
     pair_counts_all = pair_data.get("pair_counts", {})
     pair_counts_recent = pair_data.get("recent_pair_counts", {})
 
@@ -353,6 +582,9 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
                     "pull": pull_scores.get(n, 0),
                     "pair_raw": pair_score,
                     "consec": consec_bonus,
+                    "cycle": cycle_scores.get(n, 0),
+                    "rf": rf_scores.get(n, 0),
+                    "lstm": lstm_scores.get(n, 0),
                     "random": random.random(),
                 }))
 
@@ -373,6 +605,9 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
                     + weights["pull"] * scores["pull"]
                     + weights["pair"] * scores["pair"]
                     + weights["consec"] * scores["consec"]
+                    + weights["cycle"] * scores["cycle"]
+                    + weights["rf"] * scores["rf"]
+                    + weights["lstm"] * scores["lstm"]
                     + weights["random"] * scores["random"]
                 )
                 scored.append((n, total, scores))
@@ -422,6 +657,9 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
                     "pull": scores["pull"] * weights["pull"],
                     "pair": scores["pair"] * weights["pair"],
                     "consec": scores["consec"] * weights["consec"],
+                    "cycle": scores["cycle"] * weights["cycle"],
+                    "rf": scores["rf"] * weights["rf"],
+                    "lstm": scores["lstm"] * weights["lstm"],
                 }
                 sel_reasons[str(n)] = {
                     "total_score": total_score,
@@ -494,6 +732,16 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
                 reason_parts.append(f"{neighbors[0]}との連番ペアで出現しやすい傾向")
             else:
                 reason_parts.append("連番を含む抽選で出やすい傾向がある")
+        elif top_factor == "cycle":
+            cd = cycle_data.get(str(n), {})
+            dc = cd.get("dominant_cycle", "?")
+            reason_parts.append(f"約{dc}回周期で出現するパターンを検出、次の出現タイミングに該当")
+        elif top_factor == "rf":
+            rf_prob = rf_scores_raw.get(n, 0.5)
+            reason_parts.append(f"ランダムフォレストが出現確率{rf_prob:.1%}と高く予測")
+        elif top_factor == "lstm":
+            lstm_prob = lstm_scores_raw.get(n, 0.5)
+            reason_parts.append(f"LSTMが時系列パターンから出現確率{lstm_prob:.1%}と予測")
 
         # サブ理由（2番目に効いた要素）
         if second_factor and second_factor != top_factor:
@@ -512,6 +760,13 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
                 neighbors = [s for s in selected if abs(n - s) == 1 and s != n]
                 if neighbors:
                     reason_parts.append(f"{neighbors[0]}と連番")
+            elif second_factor == "cycle":
+                cd = cycle_data.get(str(n), {})
+                reason_parts.append(f"約{cd.get('dominant_cycle', '?')}回周期のタイミング")
+            elif second_factor == "rf":
+                reason_parts.append(f"RF予測でも高評価")
+            elif second_factor == "lstm":
+                reason_parts.append(f"LSTM予測でも高評価")
 
         zone_name = {"low": "低帯(1-14)", "mid": "中帯(15-29)", "high": "高帯(30-43)"}[get_zone(n)]
         reason_parts.append(zone_name)
@@ -544,6 +799,9 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
             + weights["drought"] * drought_scores.get(n, 0)
             + weights["pull"] * pull_scores.get(n, 0)
             + weights["consec"] * consec_base_scores.get(n, 0)
+            + weights["cycle"] * cycle_scores.get(n, 0)
+            + weights["rf"] * rf_scores.get(n, 0)
+            + weights["lstm"] * lstm_scores.get(n, 0)
             + weights["random"] * random.random()
         )
         bonus_candidates.append((n, total))
@@ -592,12 +850,12 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
     }
 
 
-def run_predictions(freq_data, pull_data, zone_data, pair_data, consec_data, draws, period_label="all"):
+def run_predictions(freq_data, pull_data, zone_data, pair_data, consec_data, cycle_data, rf_scores, lstm_scores, draws, period_label="all"):
     predictions = {}
     for mode_key, weights in MODES.items():
         random.seed(f"{date.today().isoformat()}_{mode_key}_{period_label}")
         predictions[mode_key] = generate_prediction(
-            freq_data, pull_data, zone_data, pair_data, consec_data, draws, weights
+            freq_data, pull_data, zone_data, pair_data, consec_data, cycle_data, rf_scores, lstm_scores, draws, weights
         )
         predictions[mode_key]["mode_name"] = MODE_NAMES[mode_key]
     return predictions
@@ -605,12 +863,24 @@ def run_predictions(freq_data, pull_data, zone_data, pair_data, consec_data, dra
 
 def analyze_period(draws, period_label="all"):
     """指定された抽選データに対して全分析 + 予想を実行"""
+    print(f"  Frequency/Pull/Zone/Pair/Consecutive...")
     freq = analyze_frequency(draws)
     pull = analyze_pull(draws)
     zone = analyze_zone(draws)
     pairs = analyze_pairs(draws)
     consec = analyze_consecutive(draws)
-    predictions = run_predictions(freq, pull, zone, pairs, consec, draws, period_label)
+
+    print(f"  Cycle analysis...")
+    cycle = analyze_cycle(draws)
+
+    print(f"  Random Forest...")
+    rf_scores = predict_rf(draws)
+
+    print(f"  LSTM...")
+    lstm_scores = predict_lstm(draws)
+
+    print(f"  Generating predictions...")
+    predictions = run_predictions(freq, pull, zone, pairs, consec, cycle, rf_scores, lstm_scores, draws, period_label)
 
     sums = [sum(d["numbers"]) for d in draws]
     odds_counts = [sum(1 for n in d["numbers"] if n % 2 == 1) for d in draws]
@@ -624,6 +894,9 @@ def analyze_period(draws, period_label="all"):
             "top_pairs": pairs["top_pairs"],
             "affinity": pairs["affinity"],
         },
+        "cycle": cycle,
+        "rf_scores": {str(k): round(v, 4) for k, v in rf_scores.items()},
+        "lstm_scores": {str(k): round(v, 4) for k, v in lstm_scores.items()},
         "predictions": predictions,
         "summary_stats": {
             "total_draws": len(draws),

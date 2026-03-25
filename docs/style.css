@@ -484,6 +484,24 @@ footer {
   text-align: center;
 }
 
+/* PDF Button */
+.pdf-btn {
+  background: linear-gradient(135deg, var(--gold), #f0c000);
+  color: #1a1a2e;
+  border: none;
+  padding: 0.7rem 1.5rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.pdf-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 15px rgba(255, 215, 0, 0.3);
+}
+
 /* Period Slider */
 .period-section {
   background: var(--bg-secondary);
