@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LOTO6 ANALYZER</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>🎱 LOTO6 ANALYZER</h1>
+    <p class="subtitle">統計分析 × AI予想</p>
+    <div class="stats-bar" id="statsBar"></div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="prediction">🤖 AI予想</button>
+    <button class="tab" data-tab="frequency">📊 出現頻度</button>
+    <button class="tab" data-tab="pull">🔗 引っ張り</button>
+    <button class="tab" data-tab="zone">🎯 数字帯</button>
+    <button class="tab" data-tab="pair">💎 ペア</button>
+    <button class="tab" data-tab="recent">🎱 直近結果</button>
+  </nav>
+
+  <main>
+    <!-- AI予想 -->
+    <section id="tab-prediction" class="tab-content active">
+      <div class="mode-selector">
+        <label><input type="radio" name="mode" value="balanced" checked> 総合予想</label>
+        <label><input type="radio" name="mode" value="frequency_heavy"> 出現頻度重視</label>
+        <label><input type="radio" name="mode" value="pull_heavy"> 引っ張り重視</label>
+        <label><input type="radio" name="mode" value="zone_balanced"> 数字帯バランス重視</label>
+        <label><input type="radio" name="mode" value="pair_heavy"> ペア重視</label>
+      </div>
+      <div id="predictionResult"></div>
+    </section>
+
+    <!-- 出現頻度 -->
+    <section id="tab-frequency" class="tab-content">
+      <div class="chart-container">
+        <canvas id="freqChart"></canvas>
+      </div>
+      <div class="two-col">
+        <div class="card">
+          <h3>🔥 ホットTOP10</h3>
+          <div id="hotList"></div>
+        </div>
+        <div class="card">
+          <h3>❄️ コールドTOP10</h3>
+          <div id="coldList"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>⏰ 出現間隔（干ばつ）</h3>
+        <div id="droughtGrid" class="number-grid"></div>
+      </div>
+    </section>
+
+    <!-- 引っ張り -->
+    <section id="tab-pull" class="tab-content">
+      <div class="metric-big" id="pullAvg"></div>
+      <div class="chart-container">
+        <canvas id="pullChart"></canvas>
+      </div>
+      <div class="card">
+        <h3>直近の引っ張り状況</h3>
+        <div id="pullTable"></div>
+      </div>
+    </section>
+
+    <!-- 数字帯 -->
+    <section id="tab-zone" class="tab-content">
+      <div class="chart-container chart-small">
+        <canvas id="zoneChart"></canvas>
+      </div>
+      <div class="card">
+        <h3>帯パターン頻度TOP10</h3>
+        <div id="zonePatterns"></div>
+      </div>
+    </section>
+
+    <!-- ペア -->
+    <section id="tab-pair" class="tab-content">
+      <div class="card">
+        <h3>TOP30 ペア</h3>
+        <div id="pairTable"></div>
+      </div>
+      <div class="card">
+        <h3>数字を選択 → 相性の良い数字</h3>
+        <div class="number-selector" id="numberSelector"></div>
+        <div id="affinityResult"></div>
+      </div>
+    </section>
+
+    <!-- 直近結果 -->
+    <section id="tab-recent" class="tab-content">
+      <div class="card">
+        <div id="recentTable"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p class="disclaimer">
+      ⚠️ 本ツールは過去の抽選データに基づく統計分析であり、将来の当選を予測・保証するものではありません。宝くじの購入は自己責任でお願いします。
+    </p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
