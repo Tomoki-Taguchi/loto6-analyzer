@@ -1,9 +1,15 @@
 /* ============================================================
-   LOTO6 ANALYZER - Frontend Application
+   LOTO6 ANALYZER - Frontend Application (マルチ期間対応)
    ============================================================ */
 
 let analysisData = null;
 let rawData = null;
+let currentPeriod = "all"; // 現在選択中の期間
+
+/** 現在の期間のデータを返す */
+function getPeriodData() {
+  return analysisData.periods[currentPeriod];
+}
 
 // ============================================================
 // Init
@@ -22,6 +28,7 @@ async function loadData() {
     ]);
     analysisData = await analysisRes.json();
     rawData = await rawRes.json();
+    setupPeriodSlider();
     renderAll();
   } catch (e) {
     document.querySelector("main").innerHTML =
@@ -55,12 +62,42 @@ function setupTabs() {
 }
 
 // ============================================================
+// Period Slider
+// ============================================================
+function setupPeriodSlider() {
+  const labels = analysisData.period_labels;
+  if (!labels || labels.length <= 1) return;
+
+  const slider = document.getElementById("periodSlider");
+  const display = document.getElementById("periodDisplay");
+  if (!slider || !display) return;
+
+  slider.min = 0;
+  slider.max = labels.length - 1;
+  slider.value = labels.length - 1; // デフォルトは全期間（最後）
+  slider.step = 1;
+
+  function update() {
+    const idx = parseInt(slider.value);
+    const info = labels[idx];
+    currentPeriod = info.key;
+    display.innerHTML = `<span class="period-name">${info.label}</span><span class="period-range">${info.range}（${info.draws}回分）</span>`;
+    renderAll();
+  }
+
+  slider.addEventListener("input", update);
+  update();
+
+  document.getElementById("periodSection").style.display = "block";
+}
+
+// ============================================================
 // Stats Bar
 // ============================================================
 function renderStatsBar() {
-  const s = analysisData.summary_stats;
+  const s = getPeriodData().summary_stats;
   document.getElementById("statsBar").innerHTML = `
-    全 <span>${s.total_draws}</span> 回分 ｜
+    分析対象 <span>${s.total_draws}</span> 回分 ｜
     期間 <span>${s.date_range[0]}</span> 〜 <span>${s.date_range[1]}</span> ｜
     最終更新 <span>${analysisData.last_updated.split("T")[0]}</span>
   `;
@@ -77,33 +114,26 @@ function createSmallBall(num, cls = "ball-gold") {
   return `<span class="ball ball-small ${cls}">${num}</span>`;
 }
 
-const FACTOR_NAMES = {
-  freq: "出現頻度",
-  drought: "干ばつ",
-  pull: "引っ張り",
-  pair: "ペア相性",
-  random: "ランダム",
-};
-
 // ============================================================
 // AI Prediction
 // ============================================================
 function renderPrediction() {
   const container = document.getElementById("predictionResult");
   const modeInputs = document.querySelectorAll('input[name="mode"]');
+  const data = getPeriodData();
 
   function render() {
     const mode = document.querySelector('input[name="mode"]:checked').value;
-    const pred = analysisData.predictions[mode];
+    const pred = data.predictions[mode];
     const isFeatured = mode === "balanced";
-
     const sumRange = pred.metrics.sum_range || "";
+    const periodLabel = currentPeriod === "all" ? "全期間" : `直近${currentPeriod}回`;
 
     container.innerHTML = `
       <div class="glossary-box">
         <h4>📖 用語説明</h4>
         <dl class="glossary">
-          <dt>出現頻度</dt><dd>全抽選期間でその数字が何回出たかの割合。高いほど「よく出る数字」。</dd>
+          <dt>出現頻度</dt><dd>選択期間でその数字が何回出たかの割合。高いほど「よく出る数字」。</dd>
           <dt>直近頻度</dt><dd>直近100回・300回に限定した出現率。全期間より高ければ「最近調子が良い」数字。</dd>
           <dt>干ばつ度</dt><dd>その数字の平均出現間隔に対して、今どれだけ出ていないかの倍率。1.0なら平均通り、2.0なら平均の2倍出ていない。</dd>
           <dt>引っ張り</dt><dd>直近5回の抽選で何回出たかを加重評価。最新回ほど重く計算し、連続出現の勢いを測る。</dd>
@@ -111,12 +141,13 @@ function renderPrediction() {
           <dt>連番傾向</dt><dd>隣り合う数字（例: 14と15）が一緒に出やすい傾向があるかの指標。</dd>
           <dt>奇偶比率</dt><dd>6個中の奇数と偶数の内訳。過去データでは3:3〜4:2が多い。</dd>
           <dt>数字帯</dt><dd>低帯(1-14)・中帯(15-29)・高帯(30-43)の3グループの内訳。各帯から最低1個、最大3個選出。</dd>
-          <dt>合計値</dt><dd>6個の合計。過去平均±1標準偏差の範囲（${sumRange}）に収まるよう制約。</dd>
+          <dt>合計値</dt><dd>6個の合計。${periodLabel}の平均±1標準偏差の範囲（${sumRange}）に収まるよう制約。</dd>
+          <dt>分析期間</dt><dd>上のスライダーで変更可能。直近100〜400回に絞ると「最近の傾向」を重視した予想になる。全期間は長期的な安定傾向を反映。</dd>
         </dl>
       </div>
 
       <div class="prediction-card ${isFeatured ? "featured" : ""}">
-        <h3>${pred.mode_name}</h3>
+        <h3>${pred.mode_name}  <span class="period-badge">${periodLabel}</span></h3>
         <div class="balls-row">
           ${pred.numbers.map((n) => createBall(n)).join("")}
           <span style="color: var(--text-muted); align-self: center; margin: 0 4px;">+</span>
@@ -164,11 +195,10 @@ function toggleReasons(btn) {
 // ============================================================
 let freqChart = null;
 function renderFrequency() {
-  const freq = analysisData.frequency;
+  const freq = getPeriodData().frequency;
   const labels = Array.from({ length: 43 }, (_, i) => i + 1);
   const counts = labels.map((n) => freq.counts[String(n)] || 0);
 
-  // Chart
   const ctx = document.getElementById("freqChart").getContext("2d");
   if (freqChart) freqChart.destroy();
   freqChart = new Chart(ctx, {
@@ -199,8 +229,6 @@ function renderFrequency() {
     },
   });
 
-  // Hot / Cold lists
-  const maxCount = Math.max(...counts);
   document.getElementById("hotList").innerHTML = `<ul class="rank-list">${freq.hot
     .map(
       (n, i) =>
@@ -215,7 +243,6 @@ function renderFrequency() {
     )
     .join("")}</ul>`;
 
-  // Drought grid
   const droughtNums = labels.map((n) => ({
     num: n,
     val: freq.drought[String(n)] || 0,
@@ -224,7 +251,7 @@ function renderFrequency() {
 
   document.getElementById("droughtGrid").innerHTML = droughtNums
     .map((d) => {
-      const intensity = d.val / maxDrought;
+      const intensity = maxDrought > 0 ? d.val / maxDrought : 0;
       const cls = intensity > 0.7 ? "cold" : intensity < 0.2 ? "hot" : "";
       return `<div class="grid-cell ${cls}">
         <div class="num">${d.num}</div>
@@ -239,15 +266,13 @@ function renderFrequency() {
 // ============================================================
 let pullChart = null;
 function renderPull() {
-  const pull = analysisData.pull;
+  const pull = getPeriodData().pull;
 
-  // Big metric
   document.getElementById("pullAvg").innerHTML = `
     <div class="number">${pull.average}</div>
     <div class="label">平均引っ張り数（前回からの重複数字数）</div>
   `;
 
-  // Chart
   const labels = Object.keys(pull.distribution);
   const values = Object.values(pull.distribution);
   const ctx = document.getElementById("pullChart").getContext("2d");
@@ -278,8 +303,8 @@ function renderPull() {
     },
   });
 
-  // Recent pulls table
   const rows = pull.recent_pulls
+    .slice()
     .reverse()
     .map(
       (p) => `<tr>
@@ -304,9 +329,8 @@ function renderPull() {
 // ============================================================
 let zoneChart = null;
 function renderZone() {
-  const zone = analysisData.zone;
+  const zone = getPeriodData().zone;
 
-  // Donut chart
   const ctx = document.getElementById("zoneChart").getContext("2d");
   if (zoneChart) zoneChart.destroy();
   zoneChart = new Chart(ctx, {
@@ -330,7 +354,6 @@ function renderZone() {
     },
   });
 
-  // Pattern table
   const rows = zone.top_patterns
     .map(
       (p, i) => `<tr>
@@ -354,9 +377,8 @@ function renderZone() {
 // Pair
 // ============================================================
 function renderPair() {
-  const pairs = analysisData.pairs;
+  const pairs = getPeriodData().pairs;
 
-  // Top pairs table
   const rows = pairs.top_pairs
     .map(
       (p, i) => `<tr>
@@ -374,23 +396,25 @@ function renderPair() {
     </table>
   `;
 
-  // Number selector
   const selector = document.getElementById("numberSelector");
   selector.innerHTML = Array.from({ length: 43 }, (_, i) => i + 1)
     .map((n) => `<button class="num-btn" data-num="${n}">${n}</button>`)
     .join("");
 
-  selector.addEventListener("click", (e) => {
+  // イベントリスナーの重複を防ぐためcloneで置換
+  const newSelector = selector.cloneNode(true);
+  selector.parentNode.replaceChild(newSelector, selector);
+
+  newSelector.addEventListener("click", (e) => {
     if (!e.target.classList.contains("num-btn")) return;
-    selector.querySelectorAll(".num-btn").forEach((b) => b.classList.remove("selected"));
+    newSelector.querySelectorAll(".num-btn").forEach((b) => b.classList.remove("selected"));
     e.target.classList.add("selected");
-    const num = e.target.dataset.num;
-    showAffinity(num);
+    showAffinity(e.target.dataset.num);
   });
 }
 
 function showAffinity(num) {
-  const affinity = analysisData.pairs.affinity[String(num)];
+  const affinity = getPeriodData().pairs.affinity[String(num)];
   if (!affinity) return;
 
   document.getElementById("affinityResult").innerHTML = `
@@ -407,7 +431,7 @@ function showAffinity(num) {
 // Recent Results
 // ============================================================
 function renderRecent() {
-  const recent = analysisData.recent_draws;
+  const recent = getPeriodData().recent_draws;
   const rows = recent
     .slice()
     .reverse()

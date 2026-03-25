@@ -592,10 +592,10 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
     }
 
 
-def run_predictions(freq_data, pull_data, zone_data, pair_data, consec_data, draws):
+def run_predictions(freq_data, pull_data, zone_data, pair_data, consec_data, draws, period_label="all"):
     predictions = {}
     for mode_key, weights in MODES.items():
-        random.seed(f"{date.today().isoformat()}_{mode_key}")
+        random.seed(f"{date.today().isoformat()}_{mode_key}_{period_label}")
         predictions[mode_key] = generate_prediction(
             freq_data, pull_data, zone_data, pair_data, consec_data, draws, weights
         )
@@ -603,40 +603,19 @@ def run_predictions(freq_data, pull_data, zone_data, pair_data, consec_data, dra
     return predictions
 
 
-# ============================================================
-# メイン
-# ============================================================
-def main():
-    print("=== LOTO6 Analyzer v2 ===")
-    data = load_data()
-    draws = data["draws"]
-    print(f"Loaded {len(draws)} draws")
-
-    print("Analyzing frequency...")
+def analyze_period(draws, period_label="all"):
+    """指定された抽選データに対して全分析 + 予想を実行"""
     freq = analyze_frequency(draws)
-
-    print("Analyzing pull patterns...")
     pull = analyze_pull(draws)
-
-    print("Analyzing zones...")
     zone = analyze_zone(draws)
-
-    print("Analyzing pairs...")
     pairs = analyze_pairs(draws)
-
-    print("Analyzing consecutive numbers...")
     consec = analyze_consecutive(draws)
+    predictions = run_predictions(freq, pull, zone, pairs, consec, draws, period_label)
 
-    print("Generating predictions (v2 engine, 20 trials per mode)...")
-    predictions = run_predictions(freq, pull, zone, pairs, consec, draws)
-
-    # サマリー統計
     sums = [sum(d["numbers"]) for d in draws]
     odds_counts = [sum(1 for n in d["numbers"] if n % 2 == 1) for d in draws]
 
-    output = {
-        "last_updated": data["last_updated"],
-        "latest_round": draws[-1]["round"],
+    return {
         "frequency": freq,
         "pull": pull,
         "zone": zone,
@@ -649,7 +628,7 @@ def main():
         "summary_stats": {
             "total_draws": len(draws),
             "avg_sum": round(sum(sums) / len(sums), 1),
-            "sum_std": round(math.sqrt(sum((s - sum(sums)/len(sums))**2 for s in sums) / len(sums)), 1),
+            "sum_std": round(math.sqrt(sum((s - sum(sums) / len(sums)) ** 2 for s in sums) / len(sums)), 1),
             "avg_odd_count": round(sum(odds_counts) / len(odds_counts), 1),
             "date_range": [draws[0]["date"], draws[-1]["date"]],
         },
@@ -660,11 +639,63 @@ def main():
                 "numbers": d["numbers"],
                 "bonus": d["bonus"],
                 "sum": sum(d["numbers"]),
-                "odd_even": f"{sum(1 for n in d['numbers'] if n%2==1)}:{sum(1 for n in d['numbers'] if n%2==0)}",
-                "zones": f"{sum(1 for n in d['numbers'] if n<=14)}-{sum(1 for n in d['numbers'] if 15<=n<=29)}-{sum(1 for n in d['numbers'] if n>=30)}",
+                "odd_even": f"{sum(1 for n in d['numbers'] if n % 2 == 1)}:{sum(1 for n in d['numbers'] if n % 2 == 0)}",
+                "zones": f"{sum(1 for n in d['numbers'] if n <= 14)}-{sum(1 for n in d['numbers'] if 15 <= n <= 29)}-{sum(1 for n in d['numbers'] if n >= 30)}",
             }
             for d in draws[-20:]
         ],
+    }
+
+
+# ============================================================
+# メイン
+# ============================================================
+PERIOD_SIZES = [100, 200, 300, 400]  # 直近N回
+
+def main():
+    print("=== LOTO6 Analyzer v2 (マルチ期間対応) ===")
+    data = load_data()
+    all_draws = data["draws"]
+    print(f"Loaded {len(all_draws)} draws")
+
+    # 全期間の分析
+    print(f"\n--- 全期間 ({len(all_draws)}回) ---")
+    result_all = analyze_period(all_draws, "all")
+
+    # 各期間の分析
+    periods = {"all": result_all}
+    for size in PERIOD_SIZES:
+        if len(all_draws) < size:
+            print(f"\n--- 直近{size}回: データ不足のためスキップ ---")
+            continue
+        period_draws = all_draws[-size:]
+        label = str(size)
+        print(f"\n--- 直近{size}回 (第{period_draws[0]['round']}回〜第{period_draws[-1]['round']}回) ---")
+        periods[label] = analyze_period(period_draws, label)
+
+    # 期間ラベル一覧（フロントエンドのスライダー用）
+    period_labels = []
+    for size in PERIOD_SIZES:
+        if str(size) in periods:
+            pd = all_draws[-size:]
+            period_labels.append({
+                "key": str(size),
+                "label": f"直近{size}回",
+                "range": f"第{pd[0]['round']}回〜第{pd[-1]['round']}回",
+                "draws": size,
+            })
+    period_labels.append({
+        "key": "all",
+        "label": f"全期間",
+        "range": f"第{all_draws[0]['round']}回〜第{all_draws[-1]['round']}回",
+        "draws": len(all_draws),
+    })
+
+    output = {
+        "last_updated": data["last_updated"],
+        "latest_round": all_draws[-1]["round"],
+        "period_labels": period_labels,
+        "periods": periods,
     }
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -673,9 +704,16 @@ def main():
 
     print(f"\nAnalysis saved to {OUTPUT_PATH}")
 
-    for mode_key, pred in predictions.items():
-        print(f"\n{pred['mode_name']}: {pred['numbers']} + bonus:{pred['bonus']}")
-        print(f"  奇偶={pred['metrics']['odd_even']} 帯={pred['metrics']['zones']} 合計={pred['metrics']['sum']} (範囲:{pred['metrics']['sum_range']})")
+    # 結果表示
+    for period_key, result in periods.items():
+        label = f"直近{period_key}回" if period_key != "all" else "全期間"
+        print(f"\n=== {label} ===")
+        for mode_key, pred in result["predictions"].items():
+            print(f"  {pred['mode_name']}: {pred['numbers']} + bonus:{pred['bonus']}")
+
+
+if __name__ == "__main__":
+    main()
 
 
 if __name__ == "__main__":
