@@ -584,6 +584,122 @@ footer {
   font-weight: normal;
 }
 
+/* Archive */
+.archive-entry {
+  margin-bottom: 1.5rem;
+}
+
+.archive-entry h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.badge {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-weight: normal;
+}
+
+.badge-verified {
+  background: rgba(78, 205, 196, 0.2);
+  color: #4ecdc4;
+  border: 1px solid rgba(78, 205, 196, 0.3);
+}
+
+.badge-pending {
+  background: rgba(255, 215, 0, 0.15);
+  color: var(--gold-dim);
+  border: 1px solid rgba(255, 215, 0, 0.2);
+}
+
+.actual-result {
+  background: var(--bg-secondary);
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  margin: 0.8rem 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.archive-pred-row {
+  padding: 0.8rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.archive-pred-row:last-child {
+  border-bottom: none;
+}
+
+.archive-pred-row-compact {
+  padding: 0.3rem 0;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.archive-mode-name {
+  color: var(--gold-dim);
+  font-weight: 600;
+  font-size: 0.85rem;
+  min-width: 120px;
+}
+
+.archive-balls {
+  margin: 0.4rem 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.ball-matched {
+  background: linear-gradient(135deg, #4ecdc4, #44b8ab) !important;
+  color: #1a1a2e !important;
+  border: none !important;
+  box-shadow: 0 0 10px rgba(78, 205, 196, 0.4);
+}
+
+.ball-miss {
+  background: var(--bg-secondary) !important;
+  color: var(--text-muted) !important;
+  border: 1px solid var(--border) !important;
+}
+
+.match-badge {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 4px;
+  font-weight: bold;
+}
+
+.match-high {
+  background: rgba(78, 205, 196, 0.2);
+  color: #4ecdc4;
+}
+
+.match-mid {
+  background: rgba(255, 215, 0, 0.15);
+  color: var(--gold);
+}
+
+.match-low {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+}
+
+.prize-label {
+  font-size: 0.75rem;
+  color: var(--gold);
+  font-weight: bold;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   height: 4px;

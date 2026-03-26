@@ -45,6 +45,7 @@ function renderAll() {
   renderZone();
   renderPair();
   renderRecent();
+  renderArchive();
 }
 
 // ============================================================
@@ -456,6 +457,186 @@ function renderRecent() {
       <tbody>${rows}</tbody>
     </table>
   `;
+}
+
+// ============================================================
+// Archive
+// ============================================================
+function renderArchive() {
+  const archive = analysisData.archive || [];
+  const modeStats = analysisData.mode_stats || {};
+  const statsSection = document.getElementById("modeStatsSection");
+  const listSection = document.getElementById("archiveList");
+
+  // モード別成績サマリー
+  if (Object.keys(modeStats).length > 0 && modeStats["all"]) {
+    const allStats = modeStats["all"];
+    let statsHtml = `<div class="card"><h3>📈 モード別 累計成績（全期間ベース）</h3>`;
+    statsHtml += `<table class="data-table"><thead><tr>
+      <th>モード</th><th>予想回数</th><th>平均一致数</th><th>最高一致</th>
+      <th>5等(3個)</th><th>4等(4個)</th><th>3等(5個)</th><th>2等(5+B)</th><th>1等(6個)</th>
+    </tr></thead><tbody>`;
+
+    for (const [modeKey, s] of Object.entries(allStats.modes)) {
+      const avg = s.total_rounds > 0 ? (s.total_matched / s.total_rounds).toFixed(2) : "-";
+      statsHtml += `<tr>
+        <td>${s.mode_name}</td>
+        <td>${s.total_rounds}</td>
+        <td><span class="value">${avg}</span></td>
+        <td><span class="value">${s.best_match}</span></td>
+        <td>${s.prize_counts["5th"]}</td>
+        <td>${s.prize_counts["4th"]}</td>
+        <td>${s.prize_counts["3rd"]}</td>
+        <td>${s.prize_counts["2nd"]}</td>
+        <td>${s.prize_counts["1st"]}</td>
+      </tr>`;
+    }
+    statsHtml += `</tbody></table></div>`;
+    statsSection.innerHTML = statsHtml;
+  } else {
+    statsSection.innerHTML = `<div class="card"><p style="color:var(--text-muted)">まだ答え合わせ済みのデータがありません。次回の抽選結果が反映されると、ここに成績が表示されます。</p></div>`;
+  }
+
+  // アーカイブ一覧（新しい順）
+  if (archive.length === 0) {
+    listSection.innerHTML = `<div class="card"><p style="color:var(--text-muted)">アーカイブはまだありません。</p></div>`;
+    return;
+  }
+
+  let listHtml = "";
+  const sorted = [...archive].reverse();
+
+  for (const entry of sorted) {
+    const verified = entry.verified;
+    const statusBadge = verified
+      ? '<span class="badge badge-verified">答え合わせ済</span>'
+      : '<span class="badge badge-pending">結果待ち</span>';
+
+    listHtml += `<div class="card archive-entry">`;
+    listHtml += `<h3>第${entry.predicted_round}回予想 ${statusBadge}</h3>`;
+    listHtml += `<p style="color:var(--text-muted);font-size:0.8rem;">生成日: ${entry.generated_at.split("T")[0]} ｜ データ: 第${entry.data_up_to_round}回まで</p>`;
+
+    // 実際の結果
+    if (verified && entry.actual) {
+      listHtml += `<div class="actual-result">`;
+      listHtml += `<span style="color:var(--text-muted);font-size:0.85rem;">実際の結果:</span> `;
+      listHtml += entry.actual.numbers.map(n => createSmallBall(n)).join("");
+      listHtml += ` + ${createSmallBall(entry.actual.bonus, "ball-bonus")}`;
+      listHtml += `<span style="color:var(--text-muted);font-size:0.8rem;margin-left:8px;">(${entry.actual.date})</span>`;
+      listHtml += `</div>`;
+    }
+
+    // 各期間の予想（全期間のみ表示、他は折りたたみ）
+    for (const [pkey, pdata] of Object.entries(entry.predictions_by_period)) {
+      const isAll = pkey === "all";
+      if (!isAll) continue; // メインは全期間のみ表示
+
+      for (const [modeKey, pred] of Object.entries(pdata.modes)) {
+        const matchCount = pred.match_count;
+        const matched = new Set(pred.matched_numbers || []);
+        const bonusHit = pred.bonus_matched;
+
+        let matchLabel = "";
+        if (verified) {
+          const cls = matchCount >= 4 ? "match-high" : matchCount >= 3 ? "match-mid" : "match-low";
+          matchLabel = `<span class="match-badge ${cls}">${matchCount}個一致${bonusHit ? " +B" : ""}</span>`;
+          // 等級
+          let prize = "";
+          if (matchCount === 6) prize = "🥇 1等";
+          else if (matchCount === 5 && bonusHit) prize = "🥈 2等";
+          else if (matchCount === 5) prize = "🥉 3等";
+          else if (matchCount === 4) prize = "4等";
+          else if (matchCount === 3) prize = "5等";
+          if (prize) matchLabel += ` <span class="prize-label">${prize}</span>`;
+        }
+
+        listHtml += `<div class="archive-pred-row">`;
+        listHtml += `<span class="archive-mode-name">${pred.mode_name}</span> ${matchLabel}<br>`;
+
+        // 数字表示（一致した数字はハイライト）
+        listHtml += `<div class="archive-balls">`;
+        for (const n of pred.numbers) {
+          if (verified && matched.has(n)) {
+            listHtml += `<span class="ball ball-small ball-matched">${n}</span>`;
+          } else {
+            listHtml += createSmallBall(n, verified ? "ball-miss" : "ball-gold");
+          }
+        }
+        if (pred.bonus != null) {
+          const bonusCls = verified ? (bonusHit ? "ball-matched" : "ball-miss") : "ball-bonus";
+          listHtml += ` <span style="color:var(--text-muted);font-size:0.8rem;">+</span> `;
+          listHtml += `<span class="ball ball-small ${bonusCls}">${pred.bonus}</span>`;
+        }
+        listHtml += `</div>`;
+
+        // 選出根拠（折りたたみ）
+        const reasonId = `reason-${entry.predicted_round}-${pkey}-${modeKey}`;
+        listHtml += `<button class="reasons-toggle" onclick="toggleArchiveReason('${reasonId}')">選出根拠</button>`;
+        listHtml += `<div id="${reasonId}" class="reasons-detail">`;
+        for (const n of pred.numbers) {
+          const r = pred.reasons[String(n)];
+          if (r) {
+            const isMatch = verified && matched.has(n);
+            listHtml += `<div class="reason-item">
+              <span class="ball ball-small ${isMatch ? 'ball-matched' : 'ball-gold'}">${n}</span>
+              <span class="reason-text">${r.reason_text}</span>
+            </div>`;
+          }
+        }
+        if (pred.bonus != null && pred.bonus_reason) {
+          listHtml += `<div class="reason-item bonus-reason">
+            <span class="ball ball-small ball-bonus">${pred.bonus}</span>
+            <span class="reason-text">${pred.bonus_reason}</span>
+          </div>`;
+        }
+        listHtml += `</div>`;
+
+        listHtml += `</div>`;
+      }
+    }
+
+    // 他期間は折りたたみ
+    const otherPeriodsId = `other-${entry.predicted_round}`;
+    const otherPeriods = Object.entries(entry.predictions_by_period).filter(([k]) => k !== "all");
+    if (otherPeriods.length > 0) {
+      listHtml += `<button class="reasons-toggle" onclick="toggleArchiveReason('${otherPeriodsId}')">他の期間の予想を表示</button>`;
+      listHtml += `<div id="${otherPeriodsId}" class="reasons-detail">`;
+
+      for (const [pkey, pdata] of otherPeriods) {
+        listHtml += `<div style="margin-top:0.8rem;"><strong style="color:var(--gold-dim)">${pdata.label}（${pdata.range}）</strong></div>`;
+        for (const [modeKey, pred] of Object.entries(pdata.modes)) {
+          const matched = new Set(pred.matched_numbers || []);
+          const mc = pred.match_count;
+          let mcLabel = verified && mc != null ? ` [${mc}個一致${pred.bonus_matched ? "+B" : ""}]` : "";
+
+          listHtml += `<div class="archive-pred-row-compact">`;
+          listHtml += `<span class="archive-mode-name">${pred.mode_name}${mcLabel}</span> `;
+          for (const n of pred.numbers) {
+            if (verified && matched.has(n)) {
+              listHtml += `<span class="ball ball-small ball-matched">${n}</span>`;
+            } else {
+              listHtml += createSmallBall(n, verified ? "ball-miss" : "ball-gold");
+            }
+          }
+          if (pred.bonus != null) {
+            const bonusCls = verified ? (pred.bonus_matched ? "ball-matched" : "ball-miss") : "ball-bonus";
+            listHtml += ` <span style="font-size:0.7rem;color:var(--text-muted);">+</span> <span class="ball ball-small ${bonusCls}">${pred.bonus}</span>`;
+          }
+          listHtml += `</div>`;
+        }
+      }
+      listHtml += `</div>`;
+    }
+
+    listHtml += `</div>`;
+  }
+
+  listSection.innerHTML = listHtml;
+}
+
+function toggleArchiveReason(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle("open");
 }
 
 // ============================================================

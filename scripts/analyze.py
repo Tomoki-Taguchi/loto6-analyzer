@@ -964,11 +964,38 @@ def main():
         "draws": len(all_draws),
     })
 
+    # ============================================================
+    # アーカイブ: 予想を保存 + 答え合わせ
+    # ============================================================
+    archive_path = OUTPUT_PATH.parent / "archive.json"
+    archive = load_archive(archive_path)
+    latest_round = all_draws[-1]["round"]
+    next_round = latest_round + 1
+
+    # 答え合わせ: アーカイブ済みの予想に実際の結果を突き合わせ
+    verify_archive(archive, all_draws)
+
+    # 今回の予想をアーカイブに追加（まだ保存されていない場合のみ）
+    if not any(e["predicted_round"] == next_round for e in archive):
+        entry = build_archive_entry(next_round, latest_round, periods, period_labels, data["last_updated"])
+        archive.append(entry)
+        print(f"\nArchived predictions for round {next_round}")
+    else:
+        print(f"\nRound {next_round} already archived, skipping")
+
+    # アーカイブ保存
+    save_archive(archive_path, archive)
+
+    # モード別累計成績
+    mode_stats = calc_mode_stats(archive)
+
     output = {
         "last_updated": data["last_updated"],
-        "latest_round": all_draws[-1]["round"],
+        "latest_round": latest_round,
         "period_labels": period_labels,
         "periods": periods,
+        "archive": archive,
+        "mode_stats": mode_stats,
     }
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -985,8 +1012,145 @@ def main():
             print(f"  {pred['mode_name']}: {pred['numbers']} + bonus:{pred['bonus']}")
 
 
-if __name__ == "__main__":
-    main()
+# ============================================================
+# アーカイブ関連関数
+# ============================================================
+ARCHIVE_PATH = Path(__file__).parent.parent / "docs" / "data" / "archive.json"
+
+
+def load_archive(path):
+    if path.exists():
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+
+def save_archive(path, archive):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(archive, f, ensure_ascii=False, indent=2)
+
+
+def build_archive_entry(predicted_round, data_round, periods, period_labels, last_updated):
+    """全期間×全モードの予想をアーカイブエントリとして構築"""
+    entry = {
+        "predicted_round": predicted_round,
+        "data_up_to_round": data_round,
+        "generated_at": last_updated,
+        "actual": None,  # 結果が出たら埋まる
+        "verified": False,
+        "predictions_by_period": {},
+    }
+
+    for pinfo in period_labels:
+        pkey = pinfo["key"]
+        pdata = periods.get(pkey)
+        if not pdata:
+            continue
+
+        period_preds = {}
+        for mode_key, pred in pdata["predictions"].items():
+            period_preds[mode_key] = {
+                "mode_name": pred["mode_name"],
+                "numbers": pred["numbers"],
+                "bonus": pred.get("bonus"),
+                "bonus_reason": pred.get("bonus_reason", ""),
+                "reasons": pred.get("reasons", {}),
+                "metrics": pred.get("metrics", {}),
+                "match_count": None,  # 答え合わせ後に埋まる
+                "matched_numbers": None,
+                "bonus_matched": None,
+            }
+        entry["predictions_by_period"][pkey] = {
+            "label": pinfo["label"],
+            "range": pinfo["range"],
+            "draws": pinfo["draws"],
+            "modes": period_preds,
+        }
+
+    return entry
+
+
+def verify_archive(archive, draws):
+    """アーカイブの予想と実際の結果を突き合わせ"""
+    draw_map = {d["round"]: d for d in draws}
+
+    for entry in archive:
+        if entry["verified"]:
+            continue
+
+        pred_round = entry["predicted_round"]
+        if pred_round not in draw_map:
+            continue  # まだ抽選されていない
+
+        actual = draw_map[pred_round]
+        actual_set = set(actual["numbers"])
+        actual_bonus = actual["bonus"]
+
+        entry["actual"] = {
+            "numbers": actual["numbers"],
+            "bonus": actual_bonus,
+            "date": actual["date"],
+        }
+        entry["verified"] = True
+
+        # 各期間×各モードの答え合わせ
+        for pkey, pdata in entry["predictions_by_period"].items():
+            for mode_key, pred in pdata["modes"].items():
+                pred_set = set(pred["numbers"])
+                matched = sorted(list(pred_set & actual_set))
+                pred["match_count"] = len(matched)
+                pred["matched_numbers"] = matched
+                pred["bonus_matched"] = pred.get("bonus") == actual_bonus
+
+        print(f"  Verified round {pred_round}: actual={actual['numbers']} bonus={actual_bonus}")
+
+
+def calc_mode_stats(archive):
+    """モード別の累計成績を集計"""
+    verified = [e for e in archive if e["verified"]]
+    if not verified:
+        return {}
+
+    stats = {}
+    for entry in verified:
+        for pkey, pdata in entry["predictions_by_period"].items():
+            if pkey not in stats:
+                stats[pkey] = {"label": pdata["label"], "modes": {}}
+            for mode_key, pred in pdata["modes"].items():
+                if mode_key not in stats[pkey]["modes"]:
+                    stats[pkey]["modes"][mode_key] = {
+                        "mode_name": pred["mode_name"],
+                        "total_rounds": 0,
+                        "match_distribution": {str(i): 0 for i in range(7)},
+                        "total_matched": 0,
+                        "bonus_matched": 0,
+                        "best_match": 0,
+                        "prize_counts": {"1st": 0, "2nd": 0, "3rd": 0, "4th": 0, "5th": 0},
+                    }
+                s = stats[pkey]["modes"][mode_key]
+                mc = pred["match_count"] if pred["match_count"] is not None else 0
+                s["total_rounds"] += 1
+                s["match_distribution"][str(mc)] = s["match_distribution"].get(str(mc), 0) + 1
+                s["total_matched"] += mc
+                if pred.get("bonus_matched"):
+                    s["bonus_matched"] += 1
+                if mc > s["best_match"]:
+                    s["best_match"] = mc
+                # 等級判定
+                bonus_hit = pred.get("bonus_matched", False)
+                if mc == 6:
+                    s["prize_counts"]["1st"] += 1
+                elif mc == 5 and bonus_hit:
+                    s["prize_counts"]["2nd"] += 1
+                elif mc == 5:
+                    s["prize_counts"]["3rd"] += 1
+                elif mc == 4:
+                    s["prize_counts"]["4th"] += 1
+                elif mc == 3:
+                    s["prize_counts"]["5th"] += 1
+
+    return stats
 
 
 if __name__ == "__main__":
