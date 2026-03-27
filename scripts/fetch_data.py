@@ -8,6 +8,7 @@ import sys
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import requests
 from bs4 import BeautifulSoup
@@ -30,7 +31,10 @@ def load_existing_data():
 
 def parse_page(html: str) -> list[dict]:
     """1ページ分のHTMLから抽選データをパースする。"""
-    soup = BeautifulSoup(html, "lxml")
+    try:
+        soup = BeautifulSoup(html, "lxml")
+    except Exception:
+        soup = BeautifulSoup(html, "html.parser")
     draws = []
 
     rows = soup.select("table tr")
@@ -111,47 +115,84 @@ def parse_page(html: str) -> list[dict]:
     return draws
 
 
-def fetch_all_data(existing_last_round: int = 0):
-    """全ページからデータを取得する。差分更新対応。"""
-    all_draws = []
-    page = 1
-    max_pages = 30  # 安全上限
-
-    while page <= max_pages:
-        url = BASE_URL.format(page)
-        print(f"Fetching page {page}: {url}")
-
+def _fetch_page(page: int) -> Optional[list]:
+    """1ページ取得してパース結果を返す。失敗時はNone。"""
+    url = BASE_URL.format(page)
+    print(f"Fetching page {page}: {url}")
+    for attempt in range(2):
         try:
             response = requests.get(url, headers=HEADERS, timeout=30)
             response.raise_for_status()
+            return parse_page(response.text)
         except requests.RequestException as e:
-            print(f"  Error fetching page {page}: {e}")
-            # リトライ
-            time.sleep(3)
-            try:
-                response = requests.get(url, headers=HEADERS, timeout=30)
-                response.raise_for_status()
-            except requests.RequestException as e2:
-                print(f"  Retry failed for page {page}: {e2}")
-                break
+            print(f"  {'Retry' if attempt else 'Error'} fetching page {page}: {e}")
+            if attempt == 0:
+                time.sleep(3)
+    return None
 
-        draws = parse_page(response.text)
-        if not draws:
-            print(f"  No draws found on page {page}. Stopping.")
-            break
 
-        print(f"  Found {len(draws)} draws (rounds {draws[0]['round']}-{draws[-1]['round']})")
-        all_draws.extend(draws)
-
-        # 全部既存データより古いなら差分更新完了
-        if existing_last_round > 0:
-            newest_on_page = max(d["round"] for d in draws)
-            if newest_on_page <= existing_last_round:
-                print(f"  All draws on this page already exist. Stopping.")
-                break
-
-        page += 1
+def _find_last_page() -> int:
+    """最終ページ番号を二分探索で特定する。"""
+    # まず上限を見つける
+    lo, hi = 1, 30
+    while hi <= 100:
+        draws = _fetch_page(hi)
         time.sleep(REQUEST_DELAY)
+        if not draws:
+            break
+        hi *= 2
+    # 二分探索
+    lo = hi // 2
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        draws = _fetch_page(mid)
+        time.sleep(REQUEST_DELAY)
+        if draws:
+            lo = mid
+        else:
+            hi = mid - 1
+    print(f"  Last page: {lo}")
+    return lo
+
+
+def fetch_all_data(existing_last_round: int = 0):
+    """全ページからデータを取得する。差分更新対応（最新ページから逆順）。"""
+    all_draws = []
+
+    if existing_last_round > 0:
+        # 差分更新: 最終ページから逆順に取得し、既存データに追いついたら停止
+        last_page = _find_last_page()
+        page = last_page
+        while page >= 1:
+            draws = _fetch_page(page)
+            if not draws:
+                break
+
+            print(f"  Found {len(draws)} draws (rounds {draws[0]['round']}-{draws[-1]['round']})")
+            all_draws.extend(draws)
+
+            oldest_on_page = min(d["round"] for d in draws)
+            if oldest_on_page <= existing_last_round:
+                print(f"  Reached existing data. Stopping.")
+                break
+
+            page -= 1
+            time.sleep(REQUEST_DELAY)
+    else:
+        # 初回: ページ1から順に全取得
+        page = 1
+        max_pages = 30
+        while page <= max_pages:
+            draws = _fetch_page(page)
+            if not draws:
+                print(f"  No draws found on page {page}. Stopping.")
+                break
+
+            print(f"  Found {len(draws)} draws (rounds {draws[0]['round']}-{draws[-1]['round']})")
+            all_draws.extend(draws)
+
+            page += 1
+            time.sleep(REQUEST_DELAY)
 
     return all_draws
 
