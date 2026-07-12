@@ -506,63 +506,7 @@ function renderRecent() {
 // ============================================================
 function renderArchive() {
   const archive = analysisData.archive || [];
-  const modeStats = analysisData.mode_stats || {};
-  const statsSection = document.getElementById("modeStatsSection");
   const listSection = document.getElementById("archiveList");
-
-  // モード別成績サマリー
-  if (Object.keys(modeStats).length > 0 && modeStats["all"]) {
-    const allStats = modeStats["all"];
-    let statsHtml = `<div class="card"><h3>📈 モード別 累計成績（全期間ベース）</h3>`;
-    statsHtml += `<table class="data-table"><thead><tr>
-      <th>モード</th><th>予想回数</th><th>平均一致数</th><th>最高一致</th>
-      <th>5等(3個)</th><th>4等(4個)</th><th>3等(5個)</th><th>2等(5+B)</th><th>1等(6個)</th>
-    </tr></thead><tbody>`;
-
-    for (const [modeKey, s] of Object.entries(allStats.modes)) {
-      const avg = s.total_rounds > 0 ? (s.total_matched / s.total_rounds).toFixed(2) : "-";
-      statsHtml += `<tr>
-        <td>${s.mode_name}</td>
-        <td>${s.total_rounds}</td>
-        <td><span class="value">${avg}</span></td>
-        <td><span class="value">${s.best_match}</span></td>
-        <td>${s.prize_counts["5th"]}</td>
-        <td>${s.prize_counts["4th"]}</td>
-        <td>${s.prize_counts["3rd"]}</td>
-        <td>${s.prize_counts["2nd"]}</td>
-        <td>${s.prize_counts["1st"]}</td>
-      </tr>`;
-    }
-    statsHtml += `</tbody></table></div>`;
-    statsSection.innerHTML = statsHtml;
-
-    // ランダム基準（モンテカルロ・シミュレーション）との比較
-    const baseline = allStats.random_baseline;
-    const rbSection = document.getElementById("randomBaselineSection");
-    if (baseline && rbSection) {
-      rbSection.innerHTML = `
-        <div class="card">
-          <h3>🎲 ランダム基準との比較（モンテカルロ・シミュレーション）</h3>
-          <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:0.8rem;">
-            「完全にランダムな6個」を${baseline.n_simulations.toLocaleString()}回シミュレーションし、実際に予想した${baseline.total_rounds}回分に換算した場合の期待値です。AIモードの実績が上の表と比べて優れているかの参考値としてご覧ください。
-          </p>
-          <div class="prediction-metrics">
-            <div>平均一致数(ランダム) <span class="value">${baseline.avg_matched}</span></div>
-            <div>4等 期待値 <span class="value">${baseline.prize_expected["4th"]}</span></div>
-            <div>3等 期待値 <span class="value">${baseline.prize_expected["3rd"]}</span></div>
-            <div>2等 期待値 <span class="value">${baseline.prize_expected["2nd"]}</span></div>
-            <div>1等 期待値 <span class="value">${baseline.prize_expected["1st"]}</span></div>
-          </div>
-        </div>
-      `;
-    } else if (rbSection) {
-      rbSection.innerHTML = "";
-    }
-  } else {
-    statsSection.innerHTML = `<div class="card"><p style="color:var(--text-muted)">まだ答え合わせ済みのデータがありません。次回の抽選結果が反映されると、ここに成績が表示されます。</p></div>`;
-    const rbSection = document.getElementById("randomBaselineSection");
-    if (rbSection) rbSection.innerHTML = "";
-  }
 
   // アーカイブ一覧（新しい順）
   if (archive.length === 0) {
