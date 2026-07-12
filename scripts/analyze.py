@@ -720,9 +720,15 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
                     continue
 
                 # 最後の数字: 合計値チェック（改善⑥: ±1σ）
+                # 後半のトライアルほど許容幅を広げ、制約が厳しすぎて解が全滅
+                # （予想が空）になるのを防ぐ。品質スコアが中央寄りを優遇するため、
+                # 余裕がある場合は自然とタイトな合計値の解が選ばれる。
                 if len(test_selected) == 6:
                     s = sum(test_selected)
-                    if not (sum_range[0] <= s <= sum_range[1]):
+                    relax = 1.0 + trial * 0.15  # trial0: ±1σ 〜 trial19: ±約3.85σ
+                    lo = avg_sum - std_sum * relax
+                    hi = avg_sum + std_sum * relax
+                    if not (lo <= s <= hi):
                         continue
 
                 selected.append(n)
