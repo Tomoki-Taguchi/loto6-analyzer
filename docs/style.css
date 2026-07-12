@@ -256,6 +256,18 @@ main {
   line-height: 1.5;
 }
 
+.mc-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  background: rgba(255, 215, 0, 0.12);
+  color: var(--gold-dim);
+  border: 1px solid rgba(255, 215, 0, 0.2);
+  white-space: nowrap;
+}
+
 .bonus-reason {
   margin-top: 0.5rem;
   padding-top: 0.8rem;

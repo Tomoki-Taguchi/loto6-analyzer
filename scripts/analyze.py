@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """LOTO6 分析エンジン - 統計分析 + 予想生成（v3: 周期分析・RF・LSTM搭載）"""
 
+import hashlib
 import json
 import math
 import random
@@ -474,7 +475,106 @@ def normalize(values: dict) -> dict:
     return {k: (v - min_v) / rng for k, v in values.items()}
 
 
-def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data, cycle_data, rf_scores_raw, lstm_scores_raw, draws, weights):
+# ============================================================
+# モンテカルロ・シミュレーション関連
+# ============================================================
+def _seed_from_str(s: str) -> int:
+    """文字列から再現可能な32bit整数シードを生成（日替わりで固定結果にするため）"""
+    return int(hashlib.sha256(s.encode()).hexdigest(), 16) % (2**32)
+
+
+def monte_carlo_confidence(scores: dict, n_trials: int = 10000, seed_str: str = "mc") -> dict:
+    """各数字のスコアを重みとした非復元抽出をn_trials回シミュレーションし、
+    各数字が6個の組に選ばれた割合(%)を「モンテカルロ信頼度」として返す。
+    Efraimidis-Spirakis法（重み付きリザーバーサンプリング）でベクトル化。
+    """
+    numbers = list(range(1, 44))
+    weights_arr = np.array([max(scores.get(n, 0.0), 1e-6) for n in numbers])
+    rng = np.random.default_rng(_seed_from_str(seed_str))
+
+    u = rng.random((n_trials, len(numbers)))
+    keys = u ** (1.0 / weights_arr)
+    top6_idx = np.argpartition(-keys, 6, axis=1)[:, :6]
+
+    counts = np.zeros(len(numbers))
+    np.add.at(counts, top6_idx.ravel(), 1)
+    pct = counts / n_trials * 100
+
+    return {numbers[i]: round(float(pct[i]), 2) for i in range(len(numbers))}
+
+
+def analyze_randomness(draws, freq_data, n_sim: int = 100000):
+    """「完全にランダムな抽選だったら」をモンテカルロ・シミュレーションし、
+    実データのホット/コールド数字の偏りが統計的に珍しいのか、単なる誤差範囲かを検証する。
+    """
+    total_draws = len(draws)
+    p = 6 / 43
+    rng = np.random.default_rng(_seed_from_str(f"randomness_{total_draws}"))
+
+    sim_counts = rng.binomial(total_draws, p, size=(n_sim, 43))
+    sim_max = sim_counts.max(axis=1)
+    sim_min = sim_counts.min(axis=1)
+
+    actual_counts = np.array([freq_data["counts"][str(n)] for n in range(1, 44)])
+    actual_max = int(actual_counts.max())
+    actual_min = int(actual_counts.min())
+
+    hot_percentile = round(float((sim_max <= actual_max).mean() * 100), 1)
+    cold_percentile = round(float((sim_min >= actual_min).mean() * 100), 1)
+
+    expected = total_draws * p
+    std = math.sqrt(total_draws * p * (1 - p))
+
+    def verdict(pct):
+        return "統計的に珍しい偏り" if pct >= 95 else "ランダムでも起こりうる誤差範囲"
+
+    return {
+        "n_simulations": n_sim,
+        "expected_count": round(expected, 1),
+        "std_dev": round(std, 2),
+        "actual_hot_count": actual_max,
+        "actual_cold_count": actual_min,
+        "hot_percentile": hot_percentile,
+        "cold_percentile": cold_percentile,
+        "sim_max_p5_p95": [int(np.percentile(sim_max, 5)), int(np.percentile(sim_max, 95))],
+        "sim_min_p5_p95": [int(np.percentile(sim_min, 5)), int(np.percentile(sim_min, 95))],
+        "hot_verdict": verdict(hot_percentile),
+        "cold_verdict": verdict(cold_percentile),
+    }
+
+
+def simulate_random_baseline(total_rounds: int, n_sim: int = 200000, seed_str: str = "baseline"):
+    """完全ランダムに6個選んだ場合の成績をモンテカルロ・シミュレーションし、
+    AI予想モードの実績と比較するための基準値を作る。
+    """
+    if total_rounds <= 0:
+        return None
+
+    rng = np.random.default_rng(_seed_from_str(seed_str))
+    matches = rng.hypergeometric(ngood=6, nbad=37, nsample=6, size=n_sim)
+    bonus_hits = rng.random(n_sim) < (1 / 37)
+
+    match_dist_pct = {str(i): round(float((matches == i).mean() * 100), 3) for i in range(7)}
+    prize_prob = {
+        "1st": float((matches == 6).mean()),
+        "2nd": float(((matches == 5) & bonus_hits).mean()),
+        "3rd": float(((matches == 5) & ~bonus_hits).mean()),
+        "4th": float((matches == 4).mean()),
+        "5th": float((matches == 3).mean()),
+    }
+    prize_expected = {k: round(v * total_rounds, 4) for k, v in prize_prob.items()}
+
+    return {
+        "mode_name": "ランダム基準（シミュレーション）",
+        "n_simulations": n_sim,
+        "total_rounds": total_rounds,
+        "avg_matched": round(float(matches.mean()), 3),
+        "match_distribution_pct": match_dist_pct,
+        "prize_expected": prize_expected,
+    }
+
+
+def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data, cycle_data, rf_scores_raw, lstm_scores_raw, draws, weights, mode_key=None, period_label=None):
     """1つの予想を生成（v3: 10要素統合）"""
     total_draws = len(draws)
 
@@ -529,6 +629,24 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
 
     # ⑧ LSTMスコア
     lstm_scores = normalize({n: lstm_scores_raw.get(n, 0.5) for n in range(1, 44)})
+
+    # ⑨ モンテカルロ信頼度スコア（ペア・ランダム要素を除く各スコアの加重和を確率として
+    #    重み付き非復元抽出を1万回シミュレーションし、各数字が選ばれた割合を算出）
+    base_scores = {
+        n: (
+            weights["freq"] * freq_scores.get(n, 0)
+            + weights["recent"] * recent_scores.get(n, 0)
+            + weights["drought"] * drought_scores.get(n, 0)
+            + weights["pull"] * pull_scores.get(n, 0)
+            + weights["consec"] * consec_base_scores.get(n, 0)
+            + weights["cycle"] * cycle_scores.get(n, 0)
+            + weights["rf"] * rf_scores.get(n, 0)
+            + weights["lstm"] * lstm_scores.get(n, 0)
+        )
+        for n in range(1, 44)
+    }
+    mc_seed = f"{date.today().isoformat()}_{mode_key}_{period_label}_mc"
+    mc_confidence = monte_carlo_confidence(base_scores, n_trials=10000, seed_str=mc_seed)
 
     # ペアカウント辞書（全期間+直近を混合）
     pair_counts_all = pair_data.get("pair_counts", {})
@@ -690,7 +808,7 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
             best_result = (selected[:], dict(sel_reasons))
 
     if best_result is None:
-        return {"numbers": [], "bonus": None, "bonus_reason": "", "reasons": {}, "metrics": {}}
+        return {"numbers": [], "bonus": None, "bonus_reason": "", "reasons": {}, "metrics": {}, "monte_carlo": {}}
 
     selected, sel_reasons = best_result
     selected.sort()
@@ -778,6 +896,7 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
             "top_factor": top_factor,
             "reason_text": reason_text,
             "details": {k: round(v, 4) for k, v in info["raw_scores"].items()},
+            "monte_carlo_pct": mc_confidence.get(n, 0.0),
         }
 
     # --- ボーナス数字選出 ---
@@ -847,6 +966,7 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
             "sum_std": round(std_sum, 1),
             "sum_range": f"{sum_range[0]:.0f}〜{sum_range[1]:.0f}",
         },
+        "monte_carlo": {str(k): v for k, v in mc_confidence.items()},
     }
 
 
@@ -855,7 +975,8 @@ def run_predictions(freq_data, pull_data, zone_data, pair_data, consec_data, cyc
     for mode_key, weights in MODES.items():
         random.seed(f"{date.today().isoformat()}_{mode_key}_{period_label}")
         predictions[mode_key] = generate_prediction(
-            freq_data, pull_data, zone_data, pair_data, consec_data, cycle_data, rf_scores, lstm_scores, draws, weights
+            freq_data, pull_data, zone_data, pair_data, consec_data, cycle_data, rf_scores, lstm_scores, draws, weights,
+            mode_key=mode_key, period_label=period_label,
         )
         predictions[mode_key]["mode_name"] = MODE_NAMES[mode_key]
     return predictions
@@ -882,6 +1003,9 @@ def analyze_period(draws, period_label="all"):
     print(f"  Generating predictions...")
     predictions = run_predictions(freq, pull, zone, pairs, consec, cycle, rf_scores, lstm_scores, draws, period_label)
 
+    print(f"  Randomness check (Monte Carlo)...")
+    randomness_check = analyze_randomness(draws, freq, n_sim=100000)
+
     sums = [sum(d["numbers"]) for d in draws]
     odds_counts = [sum(1 for n in d["numbers"] if n % 2 == 1) for d in draws]
 
@@ -895,6 +1019,7 @@ def analyze_period(draws, period_label="all"):
             "affinity": pairs["affinity"],
         },
         "cycle": cycle,
+        "randomness_check": randomness_check,
         "rf_scores": {str(k): round(v, 4) for k, v in rf_scores.items()},
         "lstm_scores": {str(k): round(v, 4) for k, v in lstm_scores.items()},
         "predictions": predictions,
@@ -1149,6 +1274,14 @@ def calc_mode_stats(archive):
                     s["prize_counts"]["4th"] += 1
                 elif mc == 3:
                     s["prize_counts"]["5th"] += 1
+
+    # モンテカルロ・シミュレーションによるランダム基準（AIモードとの比較用）
+    for pkey, pdata in stats.items():
+        any_mode = next(iter(pdata["modes"].values()), None)
+        if any_mode:
+            pdata["random_baseline"] = simulate_random_baseline(
+                any_mode["total_rounds"], n_sim=200000, seed_str=f"baseline_{pkey}_{any_mode['total_rounds']}"
+            )
 
     return stats
 
