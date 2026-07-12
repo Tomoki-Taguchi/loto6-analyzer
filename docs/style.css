@@ -776,7 +776,7 @@ footer {
 }
 
 .match-low {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(0, 0, 0, 0.05);
   color: var(--text-muted);
 }
 
@@ -784,6 +784,148 @@ footer {
   font-size: 0.75rem;
   color: var(--gold);
   font-weight: bold;
+}
+
+/* アーカイブ: 予想モードタブ × 期間まとめ × ページング */
+.archive-mode-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+
+.archive-mode-tab {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 0.4rem 0.8rem;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.archive-mode-tab:hover {
+  border-color: var(--gold-dim);
+  color: var(--text);
+}
+
+.archive-mode-tab.active {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: #fff;
+  font-weight: 600;
+}
+
+.archive-entry {
+  padding: 0.7rem 1rem;
+  margin-bottom: 0.7rem;
+}
+
+.archive-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.4rem;
+}
+
+.archive-round {
+  font-weight: 700;
+  color: var(--gold-dim);
+}
+
+.archive-actual {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.archive-date {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.archive-period-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.35rem 0;
+}
+
+.archive-period-label {
+  min-width: 62px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.archive-balls-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.archive-balls-inline .ball-small {
+  width: 28px;
+  height: 28px;
+  font-size: 0.78rem;
+  margin: 0;
+}
+
+.archive-empty {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.archive-match {
+  font-size: 0.72rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 4px;
+  font-weight: bold;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.archive-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin: 1rem 0 0.5rem;
+}
+
+.pager-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.4rem 1rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.pager-btn:hover:not(:disabled) {
+  border-color: var(--gold-dim);
+}
+
+.pager-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pager-info {
+  font-size: 0.85rem;
+  color: var(--text-muted);
 }
 
 /* Scrollbar */
