@@ -140,27 +140,6 @@ function renderPrediction() {
   const container = document.getElementById("predictionResult");
   const periods = analysisData.period_labels; // [直近100, 200, 300, 400, 全期間]
 
-  const glossary = `
-    <div class="glossary-box">
-      <h4>📖 用語説明</h4>
-      <dl class="glossary">
-        <dt>出現頻度</dt><dd>その期間で数字が何回出たかの割合。高いほど「よく出る数字」。</dd>
-        <dt>直近頻度</dt><dd>直近100回・300回に限定した出現率。全期間より高ければ「最近調子が良い」数字。</dd>
-        <dt>干ばつ度</dt><dd>その数字の平均出現間隔に対して、今どれだけ出ていないかの倍率。1.0なら平均通り、2.0なら平均の2倍出ていない。</dd>
-        <dt>引っ張り</dt><dd>直近5回の抽選で何回出たかを加重評価。最新回ほど重く計算し、連続出現の勢いを測る。</dd>
-        <dt>ペア相性</dt><dd>選出済みの他の数字と過去に同時に出た回数。全期間60%＋直近200回40%の混合評価。</dd>
-        <dt>連番傾向</dt><dd>隣り合う数字（例: 14と15）が一緒に出やすい傾向があるかの指標。</dd>
-        <dt>N回周期</dt><dd>各数字が「だいたいN回おきに出る」という周期パターンを検出。次の出現タイミングに近いほどスコアが高い。</dd>
-        <dt>ランダムフォレスト</dt><dd>機械学習モデル。過去の出現パターン（直近20回の出現履歴、出現率、間隔等）から次回の出現確率を予測。100本の決定木の多数決で判断。</dd>
-        <dt>LSTM</dt><dd>時系列ディープラーニングモデル。各数字の出現/未出現の時系列データを学習し、パターンの「流れ」から次回の出現確率を予測。</dd>
-        <dt>🎲 モンテカルロ信頼度</dt><dd>各数字の統計スコアを重みとした抽選を1万回シミュレーションし、その数字が選ばれた割合。詳しくは「モンテカルロ信頼度」タブを参照。</dd>
-        <dt>奇偶比率</dt><dd>6個中の奇数と偶数の内訳。過去データでは3:3〜4:2が多い。</dd>
-        <dt>数字帯</dt><dd>低帯(1-14)・中帯(15-29)・高帯(30-43)の3グループの内訳。各帯から最低1個、最大3個選出。</dd>
-        <dt>合計値</dt><dd>6個の合計。各期間の平均±1標準偏差の範囲に収まるよう制約。</dd>
-        <dt>分析期間</dt><dd>各カードに直近100〜400回・全期間の予想を並べて表示。直近に絞るほど「最近の傾向」を、全期間は長期的な安定傾向を反映。</dd>
-      </dl>
-    </div>`;
-
   const cards = MODE_ORDER.map((mode) => {
     const base = analysisData.periods.all.predictions[mode];
     if (!base) return "";
@@ -227,7 +206,7 @@ function renderPrediction() {
       </div>`;
   }).join("");
 
-  container.innerHTML = glossary + `<p class="ball-legend">● 本数字 ○ ボーナス数字</p>` + cards;
+  container.innerHTML = `<p class="ball-legend">● 本数字 ○ ボーナス数字</p>` + cards;
 }
 
 function toggleReasons(btn) {
@@ -504,150 +483,105 @@ function renderRecent() {
 // ============================================================
 // Archive
 // ============================================================
-function renderArchive() {
-  const archive = analysisData.archive || [];
-  const listSection = document.getElementById("archiveList");
+// アーカイブ（予想モードタブ × 期間まとめ × ページング）
+let archiveMode = "balanced";
+let archivePage = 0;
+const ARCHIVE_PAGE_SIZE = 5;
+const ARCHIVE_PERIOD_ORDER = ["all", "100", "200", "300", "400"];
 
-  // アーカイブ一覧（新しい順）
-  if (archive.length === 0) {
-    listSection.innerHTML = `<div class="card"><p style="color:var(--text-muted)">アーカイブはまだありません。</p></div>`;
+function archivePeriodLabel(pk) {
+  return pk === "all" ? "全期間" : `直近${pk}回`;
+}
+
+function renderArchive() {
+  const container = document.getElementById("archiveList");
+  // 確定（答え合わせ済み）分のみ・新しい順。結果待ちの次回予想はアーカイブには出さない
+  const verified = (analysisData.archive || []).filter((e) => e.verified).reverse();
+
+  const modeNameOf = (m) => {
+    const p = analysisData.periods.all.predictions[m];
+    return p ? p.mode_name : m;
+  };
+
+  // 予想モードタブ
+  let html = `<div class="archive-mode-tabs">`;
+  for (const m of MODE_ORDER) {
+    html += `<button class="archive-mode-tab ${m === archiveMode ? "active" : ""}" onclick="setArchiveMode('${m}')">${modeNameOf(m)}</button>`;
+  }
+  html += `</div>`;
+
+  if (verified.length === 0) {
+    html += `<div class="card"><p style="color:var(--text-muted)">答え合わせ済みのアーカイブはまだありません。</p></div>`;
+    container.innerHTML = html;
     return;
   }
 
-  let listHtml = "";
-  const sorted = [...archive].reverse();
+  const totalPages = Math.ceil(verified.length / ARCHIVE_PAGE_SIZE);
+  archivePage = Math.max(0, Math.min(archivePage, totalPages - 1));
+  const start = archivePage * ARCHIVE_PAGE_SIZE;
+  const pageEntries = verified.slice(start, start + ARCHIVE_PAGE_SIZE);
 
-  for (const entry of sorted) {
-    const verified = entry.verified;
-    const statusBadge = verified
-      ? '<span class="badge badge-verified">答え合わせ済</span>'
-      : '<span class="badge badge-pending">結果待ち</span>';
-
-    listHtml += `<div class="card archive-entry">`;
-    listHtml += `<h3>第${entry.predicted_round}回予想 ${statusBadge}</h3>`;
-    listHtml += `<p style="color:var(--text-muted);font-size:0.8rem;">生成日: ${entry.generated_at.split("T")[0]} ｜ データ: 第${entry.data_up_to_round}回まで</p>`;
-
-    // 実際の結果
-    if (verified && entry.actual) {
-      listHtml += `<div class="actual-result">`;
-      listHtml += `<span style="color:var(--text-muted);font-size:0.85rem;">実際の結果:</span> `;
-      listHtml += entry.actual.numbers.map(n => createSmallBall(n)).join("");
-      listHtml += ` + ${createSmallBall(entry.actual.bonus, "ball-bonus")}`;
-      listHtml += `<span style="color:var(--text-muted);font-size:0.8rem;margin-left:8px;">(${entry.actual.date})</span>`;
-      listHtml += `</div>`;
+  for (const entry of pageEntries) {
+    const actual = entry.actual;
+    html += `<div class="card archive-entry">`;
+    html += `<div class="archive-entry-head"><span class="archive-round">第${entry.predicted_round}回</span>`;
+    if (actual) {
+      html += `<span class="archive-actual">実際 ` +
+        actual.numbers.map((n) => createSmallBall(n)).join("") +
+        ` <span class="plus">+</span> ${createSmallBall(actual.bonus, "ball-bonus")}` +
+        ` <span class="archive-date">${actual.date}</span></span>`;
     }
+    html += `</div>`;
 
-    // 各期間の予想（全期間のみ表示、他は折りたたみ）
-    for (const [pkey, pdata] of Object.entries(entry.predictions_by_period)) {
-      const isAll = pkey === "all";
-      if (!isAll) continue; // メインは全期間のみ表示
-
-      for (const [modeKey, pred] of Object.entries(pdata.modes)) {
-        const matchCount = pred.match_count;
-        const matched = new Set(pred.matched_numbers || []);
-        const bonusHit = pred.bonus_matched;
-
-        let matchLabel = "";
-        if (verified) {
-          const cls = matchCount >= 4 ? "match-high" : matchCount >= 3 ? "match-mid" : "match-low";
-          matchLabel = `<span class="match-badge ${cls}">${matchCount}個一致${bonusHit ? " +B" : ""}</span>`;
-          // 等級
-          let prize = "";
-          if (matchCount === 6) prize = "🥇 1等";
-          else if (matchCount === 5 && bonusHit) prize = "🥈 2等";
-          else if (matchCount === 5) prize = "🥉 3等";
-          else if (matchCount === 4) prize = "4等";
-          else if (matchCount === 3) prize = "5等";
-          if (prize) matchLabel += ` <span class="prize-label">${prize}</span>`;
-        }
-
-        listHtml += `<div class="archive-pred-row">`;
-        listHtml += `<span class="archive-mode-name">${pred.mode_name}</span> ${matchLabel}<br>`;
-
-        // 数字表示（一致した数字はハイライト）
-        listHtml += `<div class="archive-balls">`;
-        for (const n of pred.numbers) {
-          if (verified && matched.has(n)) {
-            listHtml += `<span class="ball ball-small ball-matched">${n}</span>`;
-          } else {
-            listHtml += createSmallBall(n, verified ? "ball-miss" : "ball-gold");
-          }
-        }
-        if (pred.bonus != null) {
-          const bonusCls = verified ? (bonusHit ? "ball-matched" : "ball-miss") : "ball-bonus";
-          listHtml += ` <span style="color:var(--text-muted);font-size:0.8rem;">+</span> `;
-          listHtml += `<span class="ball ball-small ${bonusCls}">${pred.bonus}</span>`;
-        }
-        listHtml += `</div>`;
-
-        // 選出根拠（折りたたみ）
-        const reasonId = `reason-${entry.predicted_round}-${pkey}-${modeKey}`;
-        listHtml += `<button class="reasons-toggle" onclick="toggleArchiveReason('${reasonId}')">選出根拠</button>`;
-        listHtml += `<div id="${reasonId}" class="reasons-detail">`;
-        for (const n of pred.numbers) {
-          const r = pred.reasons[String(n)];
-          if (r) {
-            const isMatch = verified && matched.has(n);
-            listHtml += `<div class="reason-item">
-              <span class="ball ball-small ${isMatch ? 'ball-matched' : 'ball-gold'}">${n}</span>
-              <span class="reason-text">${r.reason_text}</span>
-            </div>`;
-          }
-        }
-        if (pred.bonus != null && pred.bonus_reason) {
-          listHtml += `<div class="reason-item bonus-reason">
-            <span class="ball ball-small ball-bonus">${pred.bonus}</span>
-            <span class="reason-text">${pred.bonus_reason}</span>
-          </div>`;
-        }
-        listHtml += `</div>`;
-
-        listHtml += `</div>`;
+    for (const pk of ARCHIVE_PERIOD_ORDER) {
+      const pdata = entry.predictions_by_period[pk];
+      const pred = pdata && pdata.modes[archiveMode];
+      html += `<div class="archive-period-row"><span class="archive-period-label">${archivePeriodLabel(pk)}</span>`;
+      if (!pred || !pred.numbers || pred.numbers.length === 0) {
+        html += `<span class="archive-empty">データ不足</span></div>`;
+        continue;
       }
-    }
-
-    // 他期間は折りたたみ
-    const otherPeriodsId = `other-${entry.predicted_round}`;
-    const otherPeriods = Object.entries(entry.predictions_by_period).filter(([k]) => k !== "all");
-    if (otherPeriods.length > 0) {
-      listHtml += `<button class="reasons-toggle" onclick="toggleArchiveReason('${otherPeriodsId}')">他の期間の予想を表示</button>`;
-      listHtml += `<div id="${otherPeriodsId}" class="reasons-detail">`;
-
-      for (const [pkey, pdata] of otherPeriods) {
-        listHtml += `<div style="margin-top:0.8rem;"><strong style="color:var(--gold-dim)">${pdata.label}（${pdata.range}）</strong></div>`;
-        for (const [modeKey, pred] of Object.entries(pdata.modes)) {
-          const matched = new Set(pred.matched_numbers || []);
-          const mc = pred.match_count;
-          let mcLabel = verified && mc != null ? ` [${mc}個一致${pred.bonus_matched ? "+B" : ""}]` : "";
-
-          listHtml += `<div class="archive-pred-row-compact">`;
-          listHtml += `<span class="archive-mode-name">${pred.mode_name}${mcLabel}</span> `;
-          for (const n of pred.numbers) {
-            if (verified && matched.has(n)) {
-              listHtml += `<span class="ball ball-small ball-matched">${n}</span>`;
-            } else {
-              listHtml += createSmallBall(n, verified ? "ball-miss" : "ball-gold");
-            }
-          }
-          if (pred.bonus != null) {
-            const bonusCls = verified ? (pred.bonus_matched ? "ball-matched" : "ball-miss") : "ball-bonus";
-            listHtml += ` <span style="font-size:0.7rem;color:var(--text-muted);">+</span> <span class="ball ball-small ${bonusCls}">${pred.bonus}</span>`;
-          }
-          listHtml += `</div>`;
-        }
+      const matched = new Set(pred.matched_numbers || []);
+      html += `<span class="archive-balls-inline">`;
+      for (const n of pred.numbers) {
+        html += `<span class="ball ball-small ${matched.has(n) ? "ball-matched" : "ball-miss"}">${n}</span>`;
       }
-      listHtml += `</div>`;
-    }
+      if (pred.bonus != null) {
+        html += ` <span class="plus">+</span> <span class="ball ball-small ${pred.bonus_matched ? "ball-matched" : "ball-miss"}">${pred.bonus}</span>`;
+      }
+      html += `</span>`;
 
-    listHtml += `</div>`;
+      const mc = pred.match_count;
+      const cls = mc >= 4 ? "match-high" : mc >= 3 ? "match-mid" : "match-low";
+      let prize = "";
+      if (mc === 6) prize = " 🥇1等";
+      else if (mc === 5 && pred.bonus_matched) prize = " 🥈2等";
+      else if (mc === 5) prize = " 🥉3等";
+      else if (mc === 4) prize = " 4等";
+      else if (mc === 3) prize = " 5等";
+      html += `<span class="archive-match ${cls}">${mc}個一致${pred.bonus_matched ? "+B" : ""}${prize}</span></div>`;
+    }
+    html += `</div>`;
   }
 
-  listSection.innerHTML = listHtml;
+  html += `<div class="archive-pager">`;
+  html += `<button class="pager-btn" onclick="setArchivePage(${archivePage - 1})" ${archivePage === 0 ? "disabled" : ""}>← 前へ</button>`;
+  html += `<span class="pager-info">${archivePage + 1} / ${totalPages}</span>`;
+  html += `<button class="pager-btn" onclick="setArchivePage(${archivePage + 1})" ${archivePage >= totalPages - 1 ? "disabled" : ""}>次へ →</button>`;
+  html += `</div>`;
+
+  container.innerHTML = html;
 }
 
-function toggleArchiveReason(id) {
-  const el = document.getElementById(id);
-  if (el) el.classList.toggle("open");
+function setArchiveMode(m) {
+  archiveMode = m;
+  archivePage = 0;
+  renderArchive();
+}
+
+function setArchivePage(p) {
+  archivePage = p;
+  renderArchive();
 }
 
 // ============================================================
@@ -687,96 +621,3 @@ function renderMcConfidenceGrid() {
     .join("");
 }
 
-// ============================================================
-// PDF Export
-// ============================================================
-function exportPDF() {
-  const periods = analysisData.periods;
-  const periodLabels = analysisData.period_labels;
-  const latestRound = analysisData.latest_round;
-  const nextRound = latestRound + 1;
-  const updatedDate = analysisData.last_updated.split("T")[0];
-
-  let html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<title>LOTO6 ANALYZER - 予想レポート</title>
-<style>
-  @page { size: A4; margin: 15mm; }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif; color: #222; font-size: 11px; line-height: 1.5; }
-  h1 { text-align: center; font-size: 20px; margin-bottom: 4px; }
-  .subtitle { text-align: center; color: #666; font-size: 11px; margin-bottom: 12px; }
-  .meta { text-align: center; color: #888; font-size: 10px; margin-bottom: 16px; border-bottom: 2px solid #FFD700; padding-bottom: 8px; }
-  .period-section { margin-bottom: 16px; page-break-inside: avoid; }
-  .period-title { background: #1a1a2e; color: #FFD700; padding: 5px 10px; font-size: 13px; font-weight: bold; border-radius: 4px; margin-bottom: 8px; }
-  .mode-block { margin-bottom: 10px; padding: 8px; border: 1px solid #ddd; border-radius: 6px; page-break-inside: avoid; }
-  .mode-name { font-weight: bold; font-size: 12px; color: #1a1a2e; margin-bottom: 4px; }
-  .numbers { display: flex; gap: 6px; align-items: center; margin-bottom: 4px; flex-wrap: wrap; }
-  .ball { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; font-size: 13px; font-weight: bold; }
-  .ball-main { background: #FFD700; color: #1a1a2e; }
-  .ball-bonus { background: #fff; color: #FFD700; border: 2px solid #FFD700; }
-  .plus { color: #999; font-size: 14px; }
-  .metrics { color: #666; font-size: 10px; margin-bottom: 4px; }
-  .reason { color: #444; font-size: 9.5px; line-height: 1.4; }
-  .reason b { color: #1a1a2e; }
-  .disclaimer { text-align: center; color: #999; font-size: 9px; margin-top: 16px; padding-top: 8px; border-top: 1px solid #ddd; }
-  @media print { .no-print { display: none; } }
-</style></head><body>`;
-
-  html += `<h1>LOTO6 ANALYZER</h1>`;
-  html += `<p class="subtitle">統計分析 × AI予想レポート</p>`;
-  html += `<p class="meta">第${nextRound}回予想 ｜ データ最終更新: ${updatedDate} ｜ 分析対象: 第1回〜第${latestRound}回</p>`;
-
-  // 各期間
-  for (const pInfo of periodLabels) {
-    const pKey = pInfo.key;
-    const pData = periods[pKey];
-    if (!pData) continue;
-
-    html += `<div class="period-section">`;
-    html += `<div class="period-title">${pInfo.label}（${pInfo.range} / ${pInfo.draws}回分）</div>`;
-
-    const modes = ["balanced", "frequency_heavy", "pull_heavy", "zone_balanced", "pair_heavy", "ml_heavy"];
-    for (const mode of modes) {
-      const pred = pData.predictions[mode];
-      if (!pred) continue;
-
-      const balls = pred.numbers.map(n => `<span class="ball ball-main">${n}</span>`).join("");
-      const bonus = pred.bonus ? `<span class="plus">+</span><span class="ball ball-bonus">${pred.bonus}</span>` : "";
-      const m = pred.metrics;
-
-      let reasonLines = pred.numbers.map(n => {
-        const r = pred.reasons[String(n)];
-        return r ? `<b>${n}</b>: ${r.reason_text}` : "";
-      }).filter(x => x).join(" / ");
-
-      if (pred.bonus && pred.bonus_reason) {
-        reasonLines += ` / <b>B${pred.bonus}</b>: ${pred.bonus_reason}`;
-      }
-
-      html += `<div class="mode-block">`;
-      html += `<div class="mode-name">${pred.mode_name}</div>`;
-      html += `<div class="numbers">${balls} ${bonus}</div>`;
-      html += `<div class="metrics">奇偶: ${m.odd_even} ｜ 帯: ${m.zones} ｜ 合計: ${m.sum} ｜ 範囲: ${m.sum_range || ""}</div>`;
-      html += `<div class="reason">${reasonLines}</div>`;
-      html += `</div>`;
-    }
-
-    html += `</div>`;
-  }
-
-  html += `<p class="disclaimer">本ツールは過去の抽選データに基づく統計分析であり、将来の当選を予測・保証するものではありません。宝くじの購入は自己責任でお願いします。</p>`;
-  html += `</body></html>`;
-
-  // HTMLファイルとしてダウンロード（ブラウザで開いてPDF保存可能）
-  const blob = new Blob([html], { type: "text/html; charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `LOTO6_予想レポート_第${nextRound}回_${updatedDate}.html`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-
-  alert("HTMLファイルがダウンロードされました。\\nブラウザで開いて「ファイル → PDFとして書き出す」でPDFに変換できます。");
-}
