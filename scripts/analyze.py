@@ -1012,32 +1012,19 @@ def analyze_period(draws, period_label="all"):
 # ============================================================
 PERIOD_SIZES = [100, 200, 300, 400]  # 直近N回
 
-def main():
-    print("=== LOTO6 Analyzer v2 (マルチ期間対応) ===")
-    data = load_data()
-    all_draws = data["draws"]
-    print(f"Loaded {len(all_draws)} draws")
 
-    # 全期間の分析
-    print(f"\n--- 全期間 ({len(all_draws)}回) ---")
-    result_all = analyze_period(all_draws, "all")
-
-    # 各期間の分析
-    periods = {"all": result_all}
+def compute_periods(draws):
+    """与えられた抽選データから全期間＋各直近N回の分析・予想を計算し、(periods, period_labels)を返す。"""
+    periods = {"all": analyze_period(draws, "all")}
     for size in PERIOD_SIZES:
-        if len(all_draws) < size:
-            print(f"\n--- 直近{size}回: データ不足のためスキップ ---")
+        if len(draws) < size:
             continue
-        period_draws = all_draws[-size:]
-        label = str(size)
-        print(f"\n--- 直近{size}回 (第{period_draws[0]['round']}回〜第{period_draws[-1]['round']}回) ---")
-        periods[label] = analyze_period(period_draws, label)
+        periods[str(size)] = analyze_period(draws[-size:], str(size))
 
-    # 期間ラベル一覧（フロントエンドのスライダー用）
     period_labels = []
     for size in PERIOD_SIZES:
         if str(size) in periods:
-            pd = all_draws[-size:]
+            pd = draws[-size:]
             period_labels.append({
                 "key": str(size),
                 "label": f"直近{size}回",
@@ -1046,10 +1033,43 @@ def main():
             })
     period_labels.append({
         "key": "all",
-        "label": f"全期間",
-        "range": f"第{all_draws[0]['round']}回〜第{all_draws[-1]['round']}回",
-        "draws": len(all_draws),
+        "label": "全期間",
+        "range": f"第{draws[0]['round']}回〜第{draws[-1]['round']}回",
+        "draws": len(draws),
     })
+    return periods, period_labels
+
+
+def backfill_missing_archive(archive, all_draws, last_updated):
+    """実際の結果はあるのに予想記録が欠けている回を、その時点(直前回まで)のデータで
+    再構築して補完する。取得元の掲載漏れ等で予想が生成されなかった回の穴埋め用。"""
+    if not archive:
+        return
+    archived = {e["predicted_round"] for e in archive}
+    draw_rounds = {d["round"] for d in all_draws}
+    latest = all_draws[-1]["round"]
+    missing = sorted(
+        r for r in range(min(archived), latest + 1)
+        if r in draw_rounds and r not in archived
+    )
+    for r in missing:
+        hist_draws = [d for d in all_draws if d["round"] < r]
+        if len(hist_draws) < max(PERIOD_SIZES):
+            continue
+        print(f"Backfilling missing archive entry for round {r} (data up to {hist_draws[-1]['round']})")
+        hp, hpl = compute_periods(hist_draws)
+        archive.append(build_archive_entry(r, hist_draws[-1]["round"], hp, hpl, last_updated))
+
+
+def main():
+    print("=== LOTO6 Analyzer v2 (マルチ期間対応) ===")
+    data = load_data()
+    all_draws = data["draws"]
+    print(f"Loaded {len(all_draws)} draws")
+
+    # 全期間＋各直近N回の分析・予想
+    print(f"\n--- 全期間 ({len(all_draws)}回) ＋ 各直近N回の分析 ---")
+    periods, period_labels = compute_periods(all_draws)
 
     # ============================================================
     # アーカイブ: 予想を保存 + 答え合わせ
@@ -1058,6 +1078,9 @@ def main():
     archive = load_archive(archive_path)
     latest_round = all_draws[-1]["round"]
     next_round = latest_round + 1
+
+    # 欠けている過去の予想記録を補完（取得元の掲載漏れ等で予想が生成されなかった回）
+    backfill_missing_archive(archive, all_draws, data["last_updated"])
 
     # 答え合わせ: アーカイブ済みの予想に実際の結果を突き合わせ
     verify_archive(archive, all_draws)
@@ -1070,7 +1093,8 @@ def main():
     else:
         print(f"\nRound {next_round} already archived, skipping")
 
-    # アーカイブ保存
+    # アーカイブ保存（回号順に整列）
+    archive.sort(key=lambda e: e["predicted_round"])
     save_archive(archive_path, archive)
 
     # モード別累計成績
