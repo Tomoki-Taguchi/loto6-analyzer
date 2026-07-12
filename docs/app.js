@@ -59,8 +59,20 @@ function setupTabs() {
       document.querySelectorAll(".tab-content").forEach((c) => c.classList.remove("active"));
       btn.classList.add("active");
       document.getElementById(`tab-${btn.dataset.tab}`).classList.add("active");
+      updatePeriodVisibility();
+      // 非表示タブ内で生成されたグラフは幅0で潰れるため、表示された時にリサイズし直す
+      [freqChart, pullChart, zoneChart].forEach((c) => { if (c) c.resize(); });
     });
   });
+}
+
+/** 期間スライダーの表示制御：AI予想タブは全期間を並べて表示するのでスライダーを隠す */
+function updatePeriodVisibility() {
+  const section = document.getElementById("periodSection");
+  if (!section || section.dataset.ready !== "1") return;
+  const activeTab = document.querySelector(".tab.active");
+  const isPrediction = activeTab && activeTab.dataset.tab === "prediction";
+  section.style.display = isPrediction ? "none" : "block";
 }
 
 // ============================================================
@@ -90,7 +102,9 @@ function setupPeriodSlider() {
   slider.addEventListener("input", update);
   update();
 
-  document.getElementById("periodSection").style.display = "block";
+  const section = document.getElementById("periodSection");
+  section.dataset.ready = "1";
+  updatePeriodVisibility();
 }
 
 // ============================================================
@@ -119,56 +133,64 @@ function createSmallBall(num, cls = "ball-gold") {
 // ============================================================
 // AI Prediction
 // ============================================================
+// 予想モードの表示順（データの mode_name をそのまま見出しに使う）
+const MODE_ORDER = ["balanced", "frequency_heavy", "pull_heavy", "zone_balanced", "pair_heavy", "ml_heavy"];
+
 function renderPrediction() {
   const container = document.getElementById("predictionResult");
-  const modeInputs = document.querySelectorAll('input[name="mode"]');
-  const data = getPeriodData();
+  const periods = analysisData.period_labels; // [直近100, 200, 300, 400, 全期間]
 
-  function render() {
-    const mode = document.querySelector('input[name="mode"]:checked').value;
-    const pred = data.predictions[mode];
+  const glossary = `
+    <div class="glossary-box">
+      <h4>📖 用語説明</h4>
+      <dl class="glossary">
+        <dt>出現頻度</dt><dd>その期間で数字が何回出たかの割合。高いほど「よく出る数字」。</dd>
+        <dt>直近頻度</dt><dd>直近100回・300回に限定した出現率。全期間より高ければ「最近調子が良い」数字。</dd>
+        <dt>干ばつ度</dt><dd>その数字の平均出現間隔に対して、今どれだけ出ていないかの倍率。1.0なら平均通り、2.0なら平均の2倍出ていない。</dd>
+        <dt>引っ張り</dt><dd>直近5回の抽選で何回出たかを加重評価。最新回ほど重く計算し、連続出現の勢いを測る。</dd>
+        <dt>ペア相性</dt><dd>選出済みの他の数字と過去に同時に出た回数。全期間60%＋直近200回40%の混合評価。</dd>
+        <dt>連番傾向</dt><dd>隣り合う数字（例: 14と15）が一緒に出やすい傾向があるかの指標。</dd>
+        <dt>N回周期</dt><dd>各数字が「だいたいN回おきに出る」という周期パターンを検出。次の出現タイミングに近いほどスコアが高い。</dd>
+        <dt>ランダムフォレスト</dt><dd>機械学習モデル。過去の出現パターン（直近20回の出現履歴、出現率、間隔等）から次回の出現確率を予測。100本の決定木の多数決で判断。</dd>
+        <dt>LSTM</dt><dd>時系列ディープラーニングモデル。各数字の出現/未出現の時系列データを学習し、パターンの「流れ」から次回の出現確率を予測。</dd>
+        <dt>🎲 モンテカルロ信頼度</dt><dd>各数字の統計スコアを重みとした抽選を1万回シミュレーションし、その数字が選ばれた割合。詳しくは「モンテカルロ信頼度」タブを参照。</dd>
+        <dt>奇偶比率</dt><dd>6個中の奇数と偶数の内訳。過去データでは3:3〜4:2が多い。</dd>
+        <dt>数字帯</dt><dd>低帯(1-14)・中帯(15-29)・高帯(30-43)の3グループの内訳。各帯から最低1個、最大3個選出。</dd>
+        <dt>合計値</dt><dd>6個の合計。各期間の平均±1標準偏差の範囲に収まるよう制約。</dd>
+        <dt>分析期間</dt><dd>各カードに直近100〜400回・全期間の予想を並べて表示。直近に絞るほど「最近の傾向」を、全期間は長期的な安定傾向を反映。</dd>
+      </dl>
+    </div>`;
+
+  const cards = MODE_ORDER.map((mode) => {
+    const base = analysisData.periods.all.predictions[mode];
+    if (!base) return "";
     const isFeatured = mode === "balanced";
-    const sumRange = pred.metrics.sum_range || "";
-    const periodLabel = currentPeriod === "all" ? "全期間" : `直近${currentPeriod}回`;
+    const modeName = base.mode_name;
 
-    container.innerHTML = `
-      <div class="glossary-box">
-        <h4>📖 用語説明</h4>
-        <dl class="glossary">
-          <dt>出現頻度</dt><dd>選択期間でその数字が何回出たかの割合。高いほど「よく出る数字」。</dd>
-          <dt>直近頻度</dt><dd>直近100回・300回に限定した出現率。全期間より高ければ「最近調子が良い」数字。</dd>
-          <dt>干ばつ度</dt><dd>その数字の平均出現間隔に対して、今どれだけ出ていないかの倍率。1.0なら平均通り、2.0なら平均の2倍出ていない。</dd>
-          <dt>引っ張り</dt><dd>直近5回の抽選で何回出たかを加重評価。最新回ほど重く計算し、連続出現の勢いを測る。</dd>
-          <dt>ペア相性</dt><dd>選出済みの他の数字と過去に同時に出た回数。全期間60%＋直近200回40%の混合評価。</dd>
-          <dt>連番傾向</dt><dd>隣り合う数字（例: 14と15）が一緒に出やすい傾向があるかの指標。</dd>
-          <dt>N回周期</dt><dd>各数字が「だいたいN回おきに出る」という周期パターンを検出。次の出現タイミングに近いほどスコアが高い。</dd>
-          <dt>ランダムフォレスト</dt><dd>機械学習モデル。過去の出現パターン（直近20回の出現履歴、出現率、間隔等）から次回の出現確率を予測。100本の決定木の多数決で判断。</dd>
-          <dt>LSTM</dt><dd>時系列ディープラーニングモデル。各数字の出現/未出現の時系列データを学習し、パターンの「流れ」から次回の出現確率を予測。</dd>
-          <dt>🎲 モンテカルロ信頼度</dt><dd>各数字の統計スコアを重みとした抽選を1万回シミュレーションし、その数字が選ばれた割合。詳しくは「モンテカルロ信頼度」タブを参照。</dd>
-          <dt>奇偶比率</dt><dd>6個中の奇数と偶数の内訳。過去データでは3:3〜4:2が多い。</dd>
-          <dt>数字帯</dt><dd>低帯(1-14)・中帯(15-29)・高帯(30-43)の3グループの内訳。各帯から最低1個、最大3個選出。</dd>
-          <dt>合計値</dt><dd>6個の合計。${periodLabel}の平均±1標準偏差の範囲（${sumRange}）に収まるよう制約。</dd>
-          <dt>分析期間</dt><dd>上のスライダーで変更可能。直近100〜400回に絞ると「最近の傾向」を重視した予想になる。全期間は長期的な安定傾向を反映。</dd>
-        </dl>
-      </div>
+    const rows = periods
+      .map((pInfo) => {
+        const pdata = analysisData.periods[pInfo.key];
+        const pred = pdata && pdata.predictions[mode];
+        if (!pred) return "";
 
-      <div class="prediction-card ${isFeatured ? "featured" : ""}">
-        <h3>${pred.mode_name}  <span class="period-badge">${periodLabel}</span></h3>
-        <div class="balls-row">
-          ${pred.numbers.map((n) => createBall(n)).join("")}
-          <span style="color: var(--text-muted); align-self: center; margin: 0 4px;">+</span>
-          ${pred.bonus ? createBall(pred.bonus, "ball-bonus") : ""}
-        </div>
-        <p class="ball-legend">● 本数字 ○ ボーナス数字</p>
-        <div class="prediction-metrics">
-          <div>奇偶 <span class="value">${pred.metrics.odd_even}</span></div>
-          <div>帯 <span class="value">${pred.metrics.zones}</span></div>
-          <div>合計 <span class="value">${pred.metrics.sum}</span></div>
-          <div>許容範囲 <span class="value">${sumRange}</span></div>
-        </div>
-        <button class="reasons-toggle" onclick="toggleReasons(this)">選出根拠を表示</button>
-        <div class="reasons-detail">
-          ${pred.numbers
+        // 予想が空（制約を満たす組が見つからなかった期間）はメッセージ表示
+        if (!pred.numbers || pred.numbers.length === 0) {
+          return `
+            <div class="period-row">
+              <div class="period-row-main">
+                <span class="period-tag">${pInfo.label}</span>
+                <span class="period-empty">この期間はデータ条件により予想を生成できませんでした</span>
+              </div>
+            </div>`;
+        }
+
+        const balls =
+          pred.numbers.map((n) => createSmallBall(n)).join("") +
+          `<span class="plus">+</span>` +
+          (pred.bonus ? createSmallBall(pred.bonus, "ball-bonus") : "");
+
+        const reasonsHtml =
+          pred.numbers
             .map((n) => {
               const r = pred.reasons[String(n)];
               const mc = r.monte_carlo_pct != null ? `<span class="mc-badge" title="重み付き非復元抽出を1万回シミュレーションした際にこの数字が選ばれた割合">🎲 ${r.monte_carlo_pct}%</span>` : "";
@@ -177,29 +199,41 @@ function renderPrediction() {
                 <span class="reason-text">${r.reason_text}${mc}</span>
               </div>`;
             })
-            .join("")}
-          ${pred.bonus ? `<div class="reason-item bonus-reason">
-            <span class="ball ball-small ball-bonus">${pred.bonus}</span>
-            <span class="reason-text">${pred.bonus_reason || "本数字に次ぐスコアで選出。"}</span>
-          </div>` : ""}
-        </div>
-      </div>
-    `;
-  }
+            .join("") +
+          (pred.bonus
+            ? `<div class="reason-item bonus-reason">
+                <span class="ball ball-small ball-bonus">${pred.bonus}</span>
+                <span class="reason-text">${pred.bonus_reason || "本数字に次ぐスコアで選出。"}</span>
+              </div>`
+            : "");
 
-  modeInputs.forEach((input) =>
-    input.addEventListener("change", () => {
-      render();
-      renderMcConfidenceGrid();
-    })
-  );
-  render();
+        return `
+          <div class="period-row">
+            <div class="period-row-main">
+              <span class="period-tag">${pInfo.label}</span>
+              <div class="balls-row compact">${balls}</div>
+              <span class="period-metrics">奇偶 ${pred.metrics.odd_even} ｜ 合計 ${pred.metrics.sum}</span>
+            </div>
+            <button class="reasons-toggle sm" onclick="toggleReasons(this)">選出根拠 ▾</button>
+            <div class="reasons-detail">${reasonsHtml}</div>
+          </div>`;
+      })
+      .join("");
+
+    return `
+      <div class="prediction-card ${isFeatured ? "featured" : ""}">
+        <h3>${modeName}</h3>
+        <div class="period-rows">${rows}</div>
+      </div>`;
+  }).join("");
+
+  container.innerHTML = glossary + `<p class="ball-legend">● 本数字 ○ ボーナス数字</p>` + cards;
 }
 
 function toggleReasons(btn) {
   const detail = btn.nextElementSibling;
-  detail.classList.toggle("open");
-  btn.textContent = detail.classList.contains("open") ? "選出根拠を閉じる" : "選出根拠を表示";
+  const open = detail.classList.toggle("open");
+  btn.textContent = open ? "選出根拠を閉じる ▴" : "選出根拠 ▾";
 }
 
 // ============================================================
@@ -222,7 +256,7 @@ function renderFrequency() {
           label: "出現回数",
           data: counts,
           backgroundColor: labels.map((n) =>
-            freq.hot.includes(n) ? "#ff6b6b" : freq.cold.includes(n) ? "#4ecdc4" : "#FFD700"
+            freq.hot.includes(n) ? "#e08a7a" : freq.cold.includes(n) ? "#57b0a5" : "#d6b24e"
           ),
           borderRadius: 3,
         },
@@ -232,11 +266,11 @@ function renderFrequency() {
       responsive: true,
       plugins: {
         legend: { display: false },
-        title: { display: true, text: "数字別 出現回数", color: "#e0e0e0" },
+        title: { display: true, text: "数字別 出現回数", color: "#3a3843" },
       },
       scales: {
         x: { ticks: { color: "#888" }, grid: { display: false } },
-        y: { ticks: { color: "#888" }, grid: { color: "rgba(255,255,255,0.05)" } },
+        y: { ticks: { color: "#888" }, grid: { color: "rgba(0,0,0,0.06)" } },
       },
     },
   });
@@ -267,7 +301,7 @@ function renderFrequency() {
       const cls = intensity > 0.7 ? "cold" : intensity < 0.2 ? "hot" : "";
       return `<div class="grid-cell ${cls}">
         <div class="num">${d.num}</div>
-        <div class="val" style="color: ${intensity > 0.5 ? "#4ecdc4" : "#ff6b6b"}">${d.val}回前</div>
+        <div class="val" style="color: ${intensity > 0.5 ? "#57b0a5" : "#e08a7a"}">${d.val}回前</div>
       </div>`;
     })
     .join("");
@@ -297,7 +331,7 @@ function renderPull() {
         {
           label: "回数",
           data: values,
-          backgroundColor: "#FFD700",
+          backgroundColor: "#d6b24e",
           borderRadius: 6,
         },
       ],
@@ -306,11 +340,11 @@ function renderPull() {
       responsive: true,
       plugins: {
         legend: { display: false },
-        title: { display: true, text: "引っ張り数の分布", color: "#e0e0e0" },
+        title: { display: true, text: "引っ張り数の分布", color: "#3a3843" },
       },
       scales: {
         x: { ticks: { color: "#888" }, grid: { display: false } },
-        y: { ticks: { color: "#888" }, grid: { color: "rgba(255,255,255,0.05)" } },
+        y: { ticks: { color: "#888" }, grid: { color: "rgba(0,0,0,0.06)" } },
       },
     },
   });
@@ -352,7 +386,7 @@ function renderZone() {
       datasets: [
         {
           data: [zone.zone_averages.low, zone.zone_averages.mid, zone.zone_averages.high],
-          backgroundColor: ["#ff6b6b", "#FFD700", "#4ecdc4"],
+          backgroundColor: ["#e08a7a", "#d6b24e", "#57b0a5"],
           borderWidth: 0,
         },
       ],
@@ -360,8 +394,8 @@ function renderZone() {
     options: {
       responsive: true,
       plugins: {
-        legend: { labels: { color: "#e0e0e0" } },
-        title: { display: true, text: "数字帯の出現比率", color: "#e0e0e0" },
+        legend: { labels: { color: "#3a3843" } },
+        title: { display: true, text: "数字帯の出現比率", color: "#3a3843" },
       },
     },
   });
@@ -700,7 +734,7 @@ function renderMcConfidenceGrid() {
       const pct = mc[String(n)] || 0;
       const isSelected = pred.numbers.includes(n);
       const intensity = maxPct > 0 ? pct / maxPct : 0;
-      const color = intensity > 0.6 ? "#ff6b6b" : intensity > 0.3 ? "#FFD700" : "#4ecdc4";
+      const color = intensity > 0.6 ? "#e08a7a" : intensity > 0.3 ? "#d6b24e" : "#57b0a5";
       return `<div class="grid-cell ${isSelected ? "hot" : ""}">
         <div class="num">${n}</div>
         <div class="val" style="color:${color}">${pct.toFixed(1)}%</div>
