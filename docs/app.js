@@ -144,7 +144,7 @@ function renderPrediction() {
           <dt>N回周期</dt><dd>各数字が「だいたいN回おきに出る」という周期パターンを検出。次の出現タイミングに近いほどスコアが高い。</dd>
           <dt>ランダムフォレスト</dt><dd>機械学習モデル。過去の出現パターン（直近20回の出現履歴、出現率、間隔等）から次回の出現確率を予測。100本の決定木の多数決で判断。</dd>
           <dt>LSTM</dt><dd>時系列ディープラーニングモデル。各数字の出現/未出現の時系列データを学習し、パターンの「流れ」から次回の出現確率を予測。</dd>
-          <dt>🎲 モンテカルロ信頼度</dt><dd>各数字の統計スコアを重みとした抽選を1万回シミュレーションし、その数字が選ばれた割合。詳しくは「統計検証」タブを参照。</dd>
+          <dt>🎲 モンテカルロ信頼度</dt><dd>各数字の統計スコアを重みとした抽選を1万回シミュレーションし、その数字が選ばれた割合。詳しくは「モンテカルロ信頼度」タブを参照。</dd>
           <dt>奇偶比率</dt><dd>6個中の奇数と偶数の内訳。過去データでは3:3〜4:2が多い。</dd>
           <dt>数字帯</dt><dd>低帯(1-14)・中帯(15-29)・高帯(30-43)の3グループの内訳。各帯から最低1個、最大3個選出。</dd>
           <dt>合計値</dt><dd>6個の合計。${periodLabel}の平均±1標準偏差の範囲（${sumRange}）に収まるよう制約。</dd>
@@ -673,11 +673,10 @@ function toggleArchiveReason(id) {
 }
 
 // ============================================================
-// Monte Carlo (統計検証)
+// Monte Carlo (モンテカルロ信頼度)
 // ============================================================
 function renderMonteCarlo() {
   renderMcConfidenceGrid();
-  renderRandomnessCheck();
 }
 
 function renderMcConfidenceGrid() {
@@ -708,43 +707,6 @@ function renderMcConfidenceGrid() {
       </div>`;
     })
     .join("");
-}
-
-function renderRandomnessCheck() {
-  const container = document.getElementById("randomnessResult");
-  if (!container) return;
-
-  const rc = getPeriodData().randomness_check;
-  if (!rc) {
-    container.innerHTML = `<p style="color:var(--text-muted)">データがありません。</p>`;
-    return;
-  }
-
-  const hotBadge = rc.hot_percentile >= 95 ? "badge-verified" : "badge-pending";
-  const coldBadge = rc.cold_percentile >= 95 ? "badge-verified" : "badge-pending";
-
-  container.innerHTML = `
-    <table class="data-table">
-      <thead><tr><th></th><th>実際の回数</th><th>ランダムでの期待範囲(90%)</th><th>判定</th></tr></thead>
-      <tbody>
-        <tr>
-          <td>🔥 最頻出数字</td>
-          <td>${rc.actual_hot_count}回</td>
-          <td>${rc.sim_max_p5_p95[0]}〜${rc.sim_max_p5_p95[1]}回</td>
-          <td><span class="badge ${hotBadge}">${rc.hot_verdict}</span></td>
-        </tr>
-        <tr>
-          <td>❄️ 最少出現数字</td>
-          <td>${rc.actual_cold_count}回</td>
-          <td>${rc.sim_min_p5_p95[0]}〜${rc.sim_min_p5_p95[1]}回</td>
-          <td><span class="badge ${coldBadge}">${rc.cold_verdict}</span></td>
-        </tr>
-      </tbody>
-    </table>
-    <p style="color:var(--text-muted); font-size:0.8rem; margin-top:0.8rem;">
-      理論上の平均出現回数: ${rc.expected_count}回（標準偏差 ±${rc.std_dev}） ｜ シミュレーション回数: ${rc.n_simulations.toLocaleString()}回
-    </p>
-  `;
 }
 
 // ============================================================
