@@ -30,7 +30,7 @@
     <button class="tab" data-tab="pair">💎 ペア</button>
     <button class="tab" data-tab="recent">🎱 直近結果</button>
     <button class="tab" data-tab="archive">📁 アーカイブ</button>
-    <button class="tab" data-tab="montecarlo">🎲 統計検証</button>
+    <button class="tab" data-tab="montecarlo">🎲 モンテカルロ信頼度</button>
   </nav>
 
   <main>
@@ -121,28 +121,21 @@
       <div id="archiveList"></div>
     </section>
 
-    <!-- モンテカルロ統計検証 -->
+    <!-- モンテカルロ信頼度 -->
     <section id="tab-montecarlo" class="tab-content">
       <div class="card">
         <h3>🎲 モンテカルロ・シミュレーションとは</h3>
         <p style="color: var(--text-muted); font-size: 0.9rem; line-height: 1.7;">
-          コンピュータ上で「ランダムな抽選」や「重み付きの数字選出」を何万回も仮想的に繰り返し、
-          その結果の分布から確率的な傾向を推定する手法です。ここでは2つの検証を行っています。
+          コンピュータ上で「重み付きの数字選出」を何万回も仮想的に繰り返し、
+          その結果の分布から各数字の有力度を確率的に推定する手法です。
         </p>
       </div>
       <div class="card">
-        <h3>①予想数字のモンテカルロ信頼度</h3>
+        <h3>予想数字のモンテカルロ信頼度</h3>
         <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.8rem;">
-          各数字の統計スコアを重みとして、6個を選ぶ抽選を1万回シミュレーション。各数字が選ばれた割合(%)を「信頼度」として算出しています（AI予想タブの「選出根拠」内にも表示）。
+          各数字の統計スコアを重みとして、6個を選ぶ抽選を1万回シミュレーション。各数字が選ばれた割合(%)を「信頼度」として算出しています（AI予想タブの「選出根拠」内にも表示）。数字が大きいほど有力です。
         </p>
         <div id="mcConfidenceGrid" class="number-grid"></div>
-      </div>
-      <div class="card">
-        <h3>②実データの偏りは統計的に珍しいのか？</h3>
-        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.8rem;">
-          「完全にランダムな抽選だったら」を10万回シミュレーションし、実データのホット/コールド数字の偏りが、ランダムでも普通に起こりうる誤差範囲なのか、統計的に珍しい偏りなのかを検証します。
-        </p>
-        <div id="randomnessResult"></div>
       </div>
     </section>
   </main>

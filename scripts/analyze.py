@@ -503,46 +503,6 @@ def monte_carlo_confidence(scores: dict, n_trials: int = 10000, seed_str: str = 
     return {numbers[i]: round(float(pct[i]), 2) for i in range(len(numbers))}
 
 
-def analyze_randomness(draws, freq_data, n_sim: int = 100000):
-    """「完全にランダムな抽選だったら」をモンテカルロ・シミュレーションし、
-    実データのホット/コールド数字の偏りが統計的に珍しいのか、単なる誤差範囲かを検証する。
-    """
-    total_draws = len(draws)
-    p = 6 / 43
-    rng = np.random.default_rng(_seed_from_str(f"randomness_{total_draws}"))
-
-    sim_counts = rng.binomial(total_draws, p, size=(n_sim, 43))
-    sim_max = sim_counts.max(axis=1)
-    sim_min = sim_counts.min(axis=1)
-
-    actual_counts = np.array([freq_data["counts"][str(n)] for n in range(1, 44)])
-    actual_max = int(actual_counts.max())
-    actual_min = int(actual_counts.min())
-
-    hot_percentile = round(float((sim_max <= actual_max).mean() * 100), 1)
-    cold_percentile = round(float((sim_min >= actual_min).mean() * 100), 1)
-
-    expected = total_draws * p
-    std = math.sqrt(total_draws * p * (1 - p))
-
-    def verdict(pct):
-        return "統計的に珍しい偏り" if pct >= 95 else "ランダムでも起こりうる誤差範囲"
-
-    return {
-        "n_simulations": n_sim,
-        "expected_count": round(expected, 1),
-        "std_dev": round(std, 2),
-        "actual_hot_count": actual_max,
-        "actual_cold_count": actual_min,
-        "hot_percentile": hot_percentile,
-        "cold_percentile": cold_percentile,
-        "sim_max_p5_p95": [int(np.percentile(sim_max, 5)), int(np.percentile(sim_max, 95))],
-        "sim_min_p5_p95": [int(np.percentile(sim_min, 5)), int(np.percentile(sim_min, 95))],
-        "hot_verdict": verdict(hot_percentile),
-        "cold_verdict": verdict(cold_percentile),
-    }
-
-
 def simulate_random_baseline(total_rounds: int, n_sim: int = 200000, seed_str: str = "baseline"):
     """完全ランダムに6個選んだ場合の成績をモンテカルロ・シミュレーションし、
     AI予想モードの実績と比較するための基準値を作る。
@@ -1003,9 +963,6 @@ def analyze_period(draws, period_label="all"):
     print(f"  Generating predictions...")
     predictions = run_predictions(freq, pull, zone, pairs, consec, cycle, rf_scores, lstm_scores, draws, period_label)
 
-    print(f"  Randomness check (Monte Carlo)...")
-    randomness_check = analyze_randomness(draws, freq, n_sim=100000)
-
     sums = [sum(d["numbers"]) for d in draws]
     odds_counts = [sum(1 for n in d["numbers"] if n % 2 == 1) for d in draws]
 
@@ -1019,7 +976,6 @@ def analyze_period(draws, period_label="all"):
             "affinity": pairs["affinity"],
         },
         "cycle": cycle,
-        "randomness_check": randomness_check,
         "rf_scores": {str(k): round(v, 4) for k, v in rf_scores.items()},
         "lstm_scores": {str(k): round(v, 4) for k, v in lstm_scores.items()},
         "predictions": predictions,
