@@ -46,6 +46,7 @@ function renderAll() {
   renderPair();
   renderRecent();
   renderArchive();
+  renderMonteCarlo();
 }
 
 // ============================================================
@@ -143,6 +144,7 @@ function renderPrediction() {
           <dt>N回周期</dt><dd>各数字が「だいたいN回おきに出る」という周期パターンを検出。次の出現タイミングに近いほどスコアが高い。</dd>
           <dt>ランダムフォレスト</dt><dd>機械学習モデル。過去の出現パターン（直近20回の出現履歴、出現率、間隔等）から次回の出現確率を予測。100本の決定木の多数決で判断。</dd>
           <dt>LSTM</dt><dd>時系列ディープラーニングモデル。各数字の出現/未出現の時系列データを学習し、パターンの「流れ」から次回の出現確率を予測。</dd>
+          <dt>🎲 モンテカルロ信頼度</dt><dd>各数字の統計スコアを重みとした抽選を1万回シミュレーションし、その数字が選ばれた割合。詳しくは「統計検証」タブを参照。</dd>
           <dt>奇偶比率</dt><dd>6個中の奇数と偶数の内訳。過去データでは3:3〜4:2が多い。</dd>
           <dt>数字帯</dt><dd>低帯(1-14)・中帯(15-29)・高帯(30-43)の3グループの内訳。各帯から最低1個、最大3個選出。</dd>
           <dt>合計値</dt><dd>6個の合計。${periodLabel}の平均±1標準偏差の範囲（${sumRange}）に収まるよう制約。</dd>
@@ -169,9 +171,10 @@ function renderPrediction() {
           ${pred.numbers
             .map((n) => {
               const r = pred.reasons[String(n)];
+              const mc = r.monte_carlo_pct != null ? `<span class="mc-badge" title="重み付き非復元抽出を1万回シミュレーションした際にこの数字が選ばれた割合">🎲 ${r.monte_carlo_pct}%</span>` : "";
               return `<div class="reason-item">
                 <span class="ball ball-small ball-gold">${n}</span>
-                <span class="reason-text">${r.reason_text}</span>
+                <span class="reason-text">${r.reason_text}${mc}</span>
               </div>`;
             })
             .join("")}
@@ -184,7 +187,12 @@ function renderPrediction() {
     `;
   }
 
-  modeInputs.forEach((input) => input.addEventListener("change", render));
+  modeInputs.forEach((input) =>
+    input.addEventListener("change", () => {
+      render();
+      renderMcConfidenceGrid();
+    })
+  );
   render();
 }
 
@@ -493,8 +501,33 @@ function renderArchive() {
     }
     statsHtml += `</tbody></table></div>`;
     statsSection.innerHTML = statsHtml;
+
+    // ランダム基準（モンテカルロ・シミュレーション）との比較
+    const baseline = allStats.random_baseline;
+    const rbSection = document.getElementById("randomBaselineSection");
+    if (baseline && rbSection) {
+      rbSection.innerHTML = `
+        <div class="card">
+          <h3>🎲 ランダム基準との比較（モンテカルロ・シミュレーション）</h3>
+          <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:0.8rem;">
+            「完全にランダムな6個」を${baseline.n_simulations.toLocaleString()}回シミュレーションし、実際に予想した${baseline.total_rounds}回分に換算した場合の期待値です。AIモードの実績が上の表と比べて優れているかの参考値としてご覧ください。
+          </p>
+          <div class="prediction-metrics">
+            <div>平均一致数(ランダム) <span class="value">${baseline.avg_matched}</span></div>
+            <div>4等 期待値 <span class="value">${baseline.prize_expected["4th"]}</span></div>
+            <div>3等 期待値 <span class="value">${baseline.prize_expected["3rd"]}</span></div>
+            <div>2等 期待値 <span class="value">${baseline.prize_expected["2nd"]}</span></div>
+            <div>1等 期待値 <span class="value">${baseline.prize_expected["1st"]}</span></div>
+          </div>
+        </div>
+      `;
+    } else if (rbSection) {
+      rbSection.innerHTML = "";
+    }
   } else {
     statsSection.innerHTML = `<div class="card"><p style="color:var(--text-muted)">まだ答え合わせ済みのデータがありません。次回の抽選結果が反映されると、ここに成績が表示されます。</p></div>`;
+    const rbSection = document.getElementById("randomBaselineSection");
+    if (rbSection) rbSection.innerHTML = "";
   }
 
   // アーカイブ一覧（新しい順）
@@ -637,6 +670,81 @@ function renderArchive() {
 function toggleArchiveReason(id) {
   const el = document.getElementById(id);
   if (el) el.classList.toggle("open");
+}
+
+// ============================================================
+// Monte Carlo (統計検証)
+// ============================================================
+function renderMonteCarlo() {
+  renderMcConfidenceGrid();
+  renderRandomnessCheck();
+}
+
+function renderMcConfidenceGrid() {
+  const container = document.getElementById("mcConfidenceGrid");
+  if (!container) return;
+
+  const modeInput = document.querySelector('input[name="mode"]:checked');
+  const mode = modeInput ? modeInput.value : "balanced";
+  const pred = getPeriodData().predictions[mode];
+  const mc = pred && pred.monte_carlo;
+  if (!mc) {
+    container.innerHTML = `<p style="color:var(--text-muted)">データがありません。</p>`;
+    return;
+  }
+
+  const labels = Array.from({ length: 43 }, (_, i) => i + 1);
+  const maxPct = Math.max(...labels.map((n) => mc[String(n)] || 0));
+
+  container.innerHTML = labels
+    .map((n) => {
+      const pct = mc[String(n)] || 0;
+      const isSelected = pred.numbers.includes(n);
+      const intensity = maxPct > 0 ? pct / maxPct : 0;
+      const color = intensity > 0.6 ? "#ff6b6b" : intensity > 0.3 ? "#FFD700" : "#4ecdc4";
+      return `<div class="grid-cell ${isSelected ? "hot" : ""}">
+        <div class="num">${n}</div>
+        <div class="val" style="color:${color}">${pct.toFixed(1)}%</div>
+      </div>`;
+    })
+    .join("");
+}
+
+function renderRandomnessCheck() {
+  const container = document.getElementById("randomnessResult");
+  if (!container) return;
+
+  const rc = getPeriodData().randomness_check;
+  if (!rc) {
+    container.innerHTML = `<p style="color:var(--text-muted)">データがありません。</p>`;
+    return;
+  }
+
+  const hotBadge = rc.hot_percentile >= 95 ? "badge-verified" : "badge-pending";
+  const coldBadge = rc.cold_percentile >= 95 ? "badge-verified" : "badge-pending";
+
+  container.innerHTML = `
+    <table class="data-table">
+      <thead><tr><th></th><th>実際の回数</th><th>ランダムでの期待範囲(90%)</th><th>判定</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>🔥 最頻出数字</td>
+          <td>${rc.actual_hot_count}回</td>
+          <td>${rc.sim_max_p5_p95[0]}〜${rc.sim_max_p5_p95[1]}回</td>
+          <td><span class="badge ${hotBadge}">${rc.hot_verdict}</span></td>
+        </tr>
+        <tr>
+          <td>❄️ 最少出現数字</td>
+          <td>${rc.actual_cold_count}回</td>
+          <td>${rc.sim_min_p5_p95[0]}〜${rc.sim_min_p5_p95[1]}回</td>
+          <td><span class="badge ${coldBadge}">${rc.cold_verdict}</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="color:var(--text-muted); font-size:0.8rem; margin-top:0.8rem;">
+      理論上の平均出現回数: ${rc.expected_count}回（標準偏差 ±${rc.std_dev}） ｜ シミュレーション回数: ${rc.n_simulations.toLocaleString()}回
+    </p>
+  `;
 }
 
 // ============================================================
