@@ -217,6 +217,18 @@ def main():
 
     all_draws = sorted(merged.values(), key=lambda x: x["round"])
 
+    # 欠番検出: 取得元（第三者サイト）の掲載漏れ等で回号が飛ぶことがあるため警告する。
+    # 既存データに手動でバックフィルした回はマージで保持されるので、ここでは検知のみ行う。
+    if all_draws:
+        present = {d["round"] for d in all_draws}
+        rounds = sorted(present)
+        gaps = [r for r in range(rounds[0], rounds[-1] + 1) if r not in present]
+        if gaps:
+            print(f"⚠️  欠番を検出: 第{rounds[0]}回〜第{rounds[-1]}回のうち {len(gaps)} 回が欠落: {gaps}")
+            print("    → 取得元に未掲載の可能性があります。別ソースで確認し手動バックフィルを検討してください。")
+        else:
+            print(f"✓ 回号は連続しています（第{rounds[0]}回〜第{rounds[-1]}回、{len(all_draws)}件）")
+
     output = {
         "last_updated": datetime.now().isoformat(),
         "total_draws": len(all_draws),
