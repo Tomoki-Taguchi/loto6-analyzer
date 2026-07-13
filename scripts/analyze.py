@@ -774,7 +774,30 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
             best_result = (selected[:], dict(sel_reasons))
 
     if best_result is None:
-        return {"numbers": [], "bonus": None, "bonus_reason": "", "reasons": {}, "metrics": {}, "monte_carlo": {}}
+        # 制約(合計値・帯・奇偶)を全て満たす組み合わせが見つからなかった場合でも
+        # 予想を空にせず、ベーススコア上位6個を採用する（「データ不足」表示の防止）。
+        top6 = sorted(range(1, 44), key=lambda n: base_scores.get(n, 0), reverse=True)[:6]
+        fb_reasons = {}
+        for n in top6:
+            raw = {
+                "freq": freq_scores.get(n, 0),
+                "recent": recent_scores.get(n, 0),
+                "drought": drought_scores.get(n, 0),
+                "pull": pull_scores.get(n, 0),
+                "pair": 0.0,
+                "consec": consec_base_scores.get(n, 0),
+                "cycle": cycle_scores.get(n, 0),
+                "rf": rf_scores.get(n, 0),
+                "lstm": lstm_scores.get(n, 0),
+                "random": 0.0,
+            }
+            fb_reasons[str(n)] = {
+                "total_score": base_scores.get(n, 0),
+                "factor_scores": {k: raw[k] * weights[k] for k in weights if k != "random"},
+                "raw_scores": raw,
+            }
+        best_result = (top6, fb_reasons)
+        print(f"  [fallback] {mode_key}/{period_label}: 制約解なし→ベーススコア上位6個で補完")
 
     selected, sel_reasons = best_result
     selected.sort()
@@ -1061,6 +1084,39 @@ def backfill_missing_archive(archive, all_draws, last_updated):
         archive.append(build_archive_entry(r, hist_draws[-1]["round"], hp, hpl, last_updated))
 
 
+def repair_empty_predictions(archive, all_draws, last_updated):
+    """過去のアーカイブ記録のうち、制約解なしで予想が空(numbers=[])になっている
+    モードだけを、その時点(直前回まで)のデータで再計算して埋める。既存の非空予想には
+    一切触れず、空の枠のみ差し替えることで履歴の整合性を保つ。"""
+    if not archive:
+        return
+    for entry in archive:
+        pr = entry["predicted_round"]
+        empties = [
+            (pk, mk)
+            for pk, pdata in entry["predictions_by_period"].items()
+            for mk, pred in pdata["modes"].items()
+            if not pred.get("numbers")
+        ]
+        if not empties:
+            continue
+        hist_draws = [d for d in all_draws if d["round"] < pr]
+        if len(hist_draws) < max(PERIOD_SIZES):
+            continue
+        print(f"Repairing {len(empties)} empty prediction(s) in round {pr}: {empties}")
+        hp, hpl = compute_periods(hist_draws)
+        fresh = build_archive_entry(pr, hist_draws[-1]["round"], hp, hpl, last_updated)
+        changed = False
+        for pk, mk in empties:
+            new_mode = fresh["predictions_by_period"].get(pk, {}).get("modes", {}).get(mk)
+            if new_mode and new_mode.get("numbers"):
+                entry["predictions_by_period"][pk]["modes"][mk] = new_mode
+                changed = True
+        # 新しく埋めた予想の答え合わせを行うため、この回だけ再検証させる
+        if changed:
+            entry["verified"] = False
+
+
 def main():
     print("=== LOTO6 Analyzer v2 (マルチ期間対応) ===")
     data = load_data()
@@ -1081,6 +1137,9 @@ def main():
 
     # 欠けている過去の予想記録を補完（取得元の掲載漏れ等で予想が生成されなかった回）
     backfill_missing_archive(archive, all_draws, data["last_updated"])
+
+    # 制約解なしで空になっていた過去の予想を補完（該当枠のみ再計算）
+    repair_empty_predictions(archive, all_draws, data["last_updated"])
 
     # 答え合わせ: アーカイブ済みの予想に実際の結果を突き合わせ
     verify_archive(archive, all_draws)

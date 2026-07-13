@@ -542,14 +542,37 @@ function renderArchive() {
         continue;
       }
       const matched = new Set(pred.matched_numbers || []);
+      const actualBonus = actual ? actual.bonus : null;
+      const actualNums = actual ? actual.numbers : [];
+      // 予想の各数字を、本数字一致・ボーナス一致・ハズレの3通りでマーキング
+      const ballClass = (n) =>
+        matched.has(n)
+          ? "ball-matched"
+          : actualBonus != null && n === actualBonus
+          ? "ball-bonus-hit"
+          : "ball-miss";
       html += `<span class="archive-balls-inline">`;
       for (const n of pred.numbers) {
-        html += `<span class="ball ball-small ${matched.has(n) ? "ball-matched" : "ball-miss"}">${n}</span>`;
+        html += `<span class="ball ball-small ${ballClass(n)}">${n}</span>`;
       }
       if (pred.bonus != null) {
-        html += ` <span class="plus">+</span> <span class="ball ball-small ${pred.bonus_matched ? "ball-matched" : "ball-miss"}">${pred.bonus}</span>`;
+        // 予想ボーナスも同様に判定（本数字に当たれば本数字一致、実ボーナスに当たればボーナス一致）
+        const bcls = actualNums.includes(pred.bonus)
+          ? "ball-matched"
+          : pred.bonus_matched
+          ? "ball-bonus-hit"
+          : "ball-miss";
+        html += ` <span class="plus">+</span> <span class="ball ball-small ${bcls}">${pred.bonus}</span>`;
       }
       html += `</span>`;
+
+      // 予想内にボーナス数字を含んでいたか（本数字予想 or 予想ボーナスが実ボーナスに一致）
+      const bonusHit =
+        actualBonus != null &&
+        (pred.numbers.includes(actualBonus) || pred.bonus_matched);
+      if (bonusHit) {
+        html += `<span class="archive-bonus-flag">＋ボーナス${actualBonus}的中</span>`;
+      }
 
       const mc = pred.match_count;
       const cls = mc >= 4 ? "match-high" : mc >= 3 ? "match-mid" : "match-low";
@@ -559,7 +582,7 @@ function renderArchive() {
       else if (mc === 5) prize = " 🥉3等";
       else if (mc === 4) prize = " 4等";
       else if (mc === 3) prize = " 5等";
-      html += `<span class="archive-match ${cls}">${mc}個一致${pred.bonus_matched ? "+B" : ""}${prize}</span></div>`;
+      html += `<span class="archive-match ${cls}">${mc}個一致${prize}</span></div>`;
     }
     html += `</div>`;
   }

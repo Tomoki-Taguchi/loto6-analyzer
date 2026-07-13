@@ -752,6 +752,13 @@ footer {
   box-shadow: 0 2px 6px rgba(74, 158, 147, 0.25);
 }
 
+.ball-bonus-hit {
+  background: linear-gradient(135deg, #e6c15a, #c49a3f) !important;
+  color: #3a2f0f !important;
+  border: none !important;
+  box-shadow: 0 2px 6px rgba(196, 154, 63, 0.3);
+}
+
 .ball-miss {
   background: var(--bg-secondary) !important;
   color: var(--text-muted) !important;
@@ -885,6 +892,16 @@ footer {
   font-size: 0.76rem;
   color: var(--text-muted);
   font-style: italic;
+}
+
+.archive-bonus-flag {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--gold-dim);
+  background: rgba(196, 154, 63, 0.14);
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  white-space: nowrap;
 }
 
 .archive-match {
