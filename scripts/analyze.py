@@ -448,7 +448,8 @@ def predict_lstm(draws, seq_len=30, epochs=50):
 # ============================================================
 # 9. AI予想エンジン（v3: 10要素統合）
 # ============================================================
-MODES = {
+# 各モードの基準重み（頻度/干ばつ/引っ張り/ペア/連番/直近/周期/RF/LSTM/ランダム）
+_BASE_MODES = {
     "balanced":        {"freq": 0.15, "drought": 0.12, "pull": 0.10, "pair": 0.10, "consec": 0.05, "recent": 0.08, "cycle": 0.12, "rf": 0.12, "lstm": 0.12, "random": 0.04},
     "frequency_heavy": {"freq": 0.30, "drought": 0.08, "pull": 0.07, "pair": 0.07, "consec": 0.03, "recent": 0.12, "cycle": 0.08, "rf": 0.08, "lstm": 0.08, "random": 0.09},
     "pull_heavy":      {"freq": 0.10, "drought": 0.08, "pull": 0.28, "pair": 0.10, "consec": 0.05, "recent": 0.04, "cycle": 0.08, "rf": 0.09, "lstm": 0.09, "random": 0.09},
@@ -456,6 +457,38 @@ MODES = {
     "pair_heavy":      {"freq": 0.10, "drought": 0.08, "pull": 0.07, "pair": 0.22, "consec": 0.05, "recent": 0.07, "cycle": 0.08, "rf": 0.10, "lstm": 0.10, "random": 0.13},
     "ml_heavy":        {"freq": 0.08, "drought": 0.05, "pull": 0.05, "pair": 0.05, "consec": 0.02, "recent": 0.05, "cycle": 0.10, "rf": 0.25, "lstm": 0.25, "random": 0.10},
 }
+
+# 多様性チューニング（特定の数字が全予想を独占するのを防ぐ）
+DIVERSITY_TOPK = 9          # 貪欲選択の各ステップで揺らす上位候補数の基準
+DIVERSITY_QUALITY_W = 0.25  # トライアル選定における「平均スコア」の重み（小さいほど多様）
+DIVERSITY_JITTER = 0.0      # トライアル選定に加えるランダム揺らぎ量
+DIVERSITY_ECHO_REDUCTION = 0.25  # 相関の高い echo 指標の重複加点を削る割合
+# freq/recent/cycle/rf/lstm は「よく出る数字」を重複評価する相関の高い指標群。
+# これらが1つの数字(例:42)を何重にも押し上げ全予想を独占させる原因になるため、
+# 各モードの副次的な echo 指標を一定割合だけ削り、削った分を探索(random)に回す。
+_ECHO_FACTORS = {"freq", "recent", "cycle", "rf", "lstm"}
+
+
+def _apply_diversity(modes, d):
+    """echo 指標の重複加点を抑え、削った分を探索(random)へ。各モードの最重要指標
+    (signature)は保護してモードの個性を維持する。"""
+    out = {}
+    for mk, w in modes.items():
+        w = dict(w)
+        sig = max(w, key=w.get)  # そのモードで最重要の指標は削らない
+        moved = 0.0
+        for f in _ECHO_FACTORS:
+            if f == sig:
+                continue
+            cut = w[f] * d
+            w[f] = round(w[f] - cut, 4)
+            moved += cut
+        w["random"] = round(w["random"] + moved, 4)
+        out[mk] = w
+    return out
+
+
+MODES = _apply_diversity(_BASE_MODES, DIVERSITY_ECHO_REDUCTION)
 
 MODE_NAMES = {
     "balanced": "総合予想",
@@ -692,10 +725,14 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
 
             scored.sort(key=lambda x: x[1], reverse=True)
 
-            # トライアルごとにトップNからランダムに揺らす（改善⑦）
-            if trial > 0 and len(scored) > 5:
-                top_k = min(5 + trial // 3, len(scored))
-                random.shuffle(scored[:top_k])
+            # トライアルごとにトップNからランダムに揺らす（探索を強化し、特定の数字が
+            # 全予想を独占するのを防ぐ）。※旧実装は scored[:top_k] のスライスコピーを
+            # シャッフルしており実質無効だったのを修正。
+            if len(scored) > DIVERSITY_TOPK:
+                top_k = min(DIVERSITY_TOPK + trial, len(scored))
+                head = scored[:top_k]
+                random.shuffle(head)
+                scored[:top_k] = head
 
             # 制約チェックしながら選出
             found = False
@@ -767,7 +804,8 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
         odds = sum(1 for x in selected if x % 2 == 1)
         odd_balance = 1.0 - abs(odds - 3) / 3.0
         total_quality = sum(sel_reasons[str(n)]["total_score"] for n in selected)
-        quality = total_quality * 0.4 + zone_balance * 0.2 + odd_balance * 0.2 + (1.0 - min(sum_deviation, 2.0) / 2.0) * 0.2
+        avg_quality = total_quality / 6.0
+        quality = avg_quality * DIVERSITY_QUALITY_W + zone_balance * 0.2 + odd_balance * 0.2 + (1.0 - min(sum_deviation, 2.0) / 2.0) * 0.2 + random.random() * DIVERSITY_JITTER
 
         if quality > best_score:
             best_score = quality
