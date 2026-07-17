@@ -139,7 +139,7 @@ const MODE_ORDER = ["balanced", "frequency_heavy", "pull_heavy", "zone_balanced"
 
 function renderPrediction() {
   const container = document.getElementById("predictionResult");
-  const periods = analysisData.period_labels; // [直近100, 200, 300, 400, 全期間]
+  const periods = analysisData.period_labels; // [直近100〜1000, 全期間]
 
   const cards = MODE_ORDER.map((mode) => {
     const base = analysisData.periods.all.predictions[mode];
@@ -550,7 +550,15 @@ function renderRecent() {
 let archiveMode = "balanced";
 let archivePage = 0;
 const ARCHIVE_PAGE_SIZE = 5;
-const ARCHIVE_PERIOD_ORDER = ["all", "100", "200", "300", "400"];
+
+/** アーカイブの期間表示順（全期間を先頭に、以降は直近Nの昇順）。period_labels から
+ *  動的に生成するため、PERIOD_SIZES を増やしても自動で追従する。 */
+function archivePeriodOrder() {
+  const keys = (analysisData.period_labels || [])
+    .map((p) => p.key)
+    .filter((k) => k !== "all");
+  return ["all", ...keys];
+}
 
 function archivePeriodLabel(pk) {
   return pk === "all" ? "全期間" : `直近${pk}回`;
@@ -596,7 +604,7 @@ function renderArchive() {
     }
     html += `</div>`;
 
-    for (const pk of ARCHIVE_PERIOD_ORDER) {
+    for (const pk of archivePeriodOrder()) {
       const pdata = entry.predictions_by_period[pk];
       const pred = pdata && pdata.modes[archiveMode];
       html += `<div class="archive-period-row"><span class="archive-period-label">${archivePeriodLabel(pk)}</span>`;
