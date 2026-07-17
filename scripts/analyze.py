@@ -1438,38 +1438,6 @@ def backfill_missing_archive(archive, all_draws, last_updated):
         archive.append(build_archive_entry(r, hist_draws[-1]["round"], hp, hpl, last_updated))
 
 
-def backfill_new_modes(entry, periods, period_labels):
-    """既存のアーカイブエントリに、新しく追加されたモードの予想が欠けている場合、
-    同一データ時点の periods から補完する。既存モードの予想には一切触れないため、
-    モードを増やしても過去の答え合わせ済み予想の整合性は保たれる。追記した(期間, モード)一覧を返す。"""
-    added = []
-    for pinfo in period_labels:
-        pkey = pinfo["key"]
-        pdata = periods.get(pkey)
-        if not pdata or pkey not in entry["predictions_by_period"]:
-            continue
-        modes = entry["predictions_by_period"][pkey]["modes"]
-        for mode_key, pred in pdata["predictions"].items():
-            if mode_key in modes:
-                continue
-            modes[mode_key] = {
-                "mode_name": pred["mode_name"],
-                "numbers": pred["numbers"],
-                "bonus": pred.get("bonus"),
-                "bonus_reason": pred.get("bonus_reason", ""),
-                "reasons": pred.get("reasons", {}),
-                "metrics": pred.get("metrics", {}),
-                "match_count": None,
-                "matched_numbers": None,
-                "bonus_matched": None,
-            }
-            added.append((pkey, mode_key))
-    # 補完したモードの答え合わせを次回検証で行うため、確定済みなら再検証させる
-    if added and entry.get("verified"):
-        entry["verified"] = False
-    return added
-
-
 def repair_empty_predictions(archive, all_draws, last_updated):
     """過去のアーカイブ記録のうち、制約解なしで予想が空(numbers=[])になっている
     モードだけを、その時点(直前回まで)のデータで再計算して埋める。既存の非空予想には
@@ -1530,20 +1498,19 @@ def main():
     # 答え合わせ: アーカイブ済みの予想に実際の結果を突き合わせ
     verify_archive(archive, all_draws)
 
-    # 今回の予想をアーカイブに追加（まだ保存されていない場合のみ）
+    # 今回の予想をアーカイブに追加。まだ抽選前(未確定)の次回予想枠は、モードや期間の
+    # 変更が反映されるよう毎回最新のロジックで作り直す。確定済み(verified=True)の過去
+    # エントリは決して作り直さない（答え合わせ済み予想の履歴を保つ）。
     existing_entry = next((e for e in archive if e["predicted_round"] == next_round), None)
     if existing_entry is None:
-        entry = build_archive_entry(next_round, latest_round, periods, period_labels, data["last_updated"])
-        archive.append(entry)
+        archive.append(build_archive_entry(next_round, latest_round, periods, period_labels, data["last_updated"]))
         print(f"\nArchived predictions for round {next_round}")
+    elif not existing_entry.get("verified"):
+        idx = archive.index(existing_entry)
+        archive[idx] = build_archive_entry(next_round, latest_round, periods, period_labels, data["last_updated"])
+        print(f"\nRefreshed pending predictions for round {next_round} (not yet drawn)")
     else:
-        # 既に保存済みでも、新しく追加されたモード（例: 帯配分予想）が欠けていれば
-        # 同一データ時点の予想で補完する（既存モードには一切触れない安全な追記）。
-        added = backfill_new_modes(existing_entry, periods, period_labels)
-        if added:
-            print(f"\nRound {next_round} already archived; backfilled {len(added)} new-mode prediction(s): {added}")
-        else:
-            print(f"\nRound {next_round} already archived, skipping")
+        print(f"\nRound {next_round} already archived and verified, skipping")
 
     # アーカイブ保存（回号順に整列）
     archive.sort(key=lambda e: e["predicted_round"])
