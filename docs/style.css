@@ -473,6 +473,87 @@ main {
   background: rgba(255, 215, 0, 0.03);
 }
 
+/* Decade (10刻み帯配分) */
+.decade-hint {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  margin-bottom: 0.9rem;
+}
+
+.decade-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-bottom: 1.4rem;
+}
+
+.decade-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.decade-bar-label {
+  flex: 0 0 4.2rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.decade-bar-track {
+  position: relative;
+  flex: 1 1 auto;
+  height: 1.05rem;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  overflow: hidden;
+}
+
+.decade-bar-fill {
+  height: 100%;
+  border-radius: 0.55rem 0 0 0.55rem;
+  transition: width 0.4s ease;
+}
+
+/* 理論期待値マーカー（点線） */
+.decade-bar-exp {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 0;
+  border-left: 2px dashed var(--gold-dim);
+  transform: translateX(-1px);
+}
+
+.decade-bar-val {
+  flex: 0 0 8.5rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.decade-bar-val b {
+  color: var(--gold);
+}
+
+.decade-bar-exp-txt {
+  font-size: 0.72rem;
+  opacity: 0.75;
+}
+
+.decade-subhead {
+  color: var(--gold);
+  font-size: 0.92rem;
+  margin: 1.2rem 0 0.6rem;
+}
+
+@media (max-width: 560px) {
+  .decade-bar-val { flex-basis: 6.5rem; }
+  .decade-bar-exp-txt { display: none; }
+}
+
 /* Number grid (drought) */
 .number-grid {
   display: grid;

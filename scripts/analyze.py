@@ -162,6 +162,92 @@ def analyze_zone(draws):
 
 
 # ============================================================
+# 3-b. 10刻み帯（デカード）配分分析
+# ============================================================
+# 1-10 / 11-20 / 21-30 / 31-40 / 41-43 の5グループ。40番台は3個しかない。
+DECADE_GROUPS = [(1, 10), (11, 20), (21, 30), (31, 40), (41, 43)]
+DECADE_LABELS = ["1-10", "11-20", "21-30", "31-40", "41-43"]
+DECADE_SIZES = [hi - lo + 1 for lo, hi in DECADE_GROUPS]
+DECADE_RECENT_WINDOW = 100   # 直近トレンド集計に使うウィンドウ
+DECADE_RECENT_BLEND = 0.35   # 目標配分サンプリングでの「直近」の重み（全期間 0.65 : 直近 0.35）
+
+
+def get_decade(n):
+    """数字を10刻みグループのインデックス(0-4)に変換"""
+    if n <= 10:
+        return 0
+    elif n <= 20:
+        return 1
+    elif n <= 30:
+        return 2
+    elif n <= 40:
+        return 3
+    return 4
+
+
+def analyze_decade(draws):
+    """各抽選を10刻み5グループの配分パターン(例:2-1-1-2-0)として集計し、
+    グループ別平均・期待値・上位パターン(全期間/直近)と、予想でサンプリングに使う
+    配分の重み(全期間+直近ブレンド)を返す。"""
+    n_draws = len(draws)
+    totals = [0] * 5
+    pattern_counter = Counter()
+    recent_counter = Counter()
+    recent_n = min(DECADE_RECENT_WINDOW, n_draws)
+
+    for i, d in enumerate(draws):
+        counts = [0] * 5
+        for num in d["numbers"]:
+            counts[get_decade(num)] += 1
+        key = "-".join(map(str, counts))
+        pattern_counter[key] += 1
+        for gi in range(5):
+            totals[gi] += counts[gi]
+        if i >= n_draws - recent_n:
+            recent_counter[key] += 1
+
+    averages = [round(totals[gi] / n_draws, 2) for gi in range(5)]
+    # 一様（公平なくじ）を仮定した理論期待値: 6 * グループのサイズ / 43
+    expected = [round(6 * DECADE_SIZES[gi] / 43, 2) for gi in range(5)]
+    group_pct = [round(totals[gi] / (n_draws * 6) * 100, 1) for gi in range(5)]
+
+    def to_list(counter, denom, top):
+        return [
+            {
+                "pattern": p,
+                "counts": [int(x) for x in p.split("-")],
+                "count": c,
+                "percentage": round(c / denom * 100, 1),
+            }
+            for p, c in counter.most_common(top)
+        ]
+
+    top_patterns = to_list(pattern_counter, n_draws, 12)
+    recent_top_patterns = to_list(recent_counter, recent_n, 8) if recent_n > 0 else []
+
+    # 目標配分サンプリング用の重み: 全期間の出現率と直近の出現率をブレンド
+    pattern_weights = {}
+    for key in set(pattern_counter) | set(recent_counter):
+        p_all = pattern_counter.get(key, 0) / n_draws
+        p_rec = recent_counter.get(key, 0) / recent_n if recent_n > 0 else 0.0
+        w = (1 - DECADE_RECENT_BLEND) * p_all + DECADE_RECENT_BLEND * p_rec
+        if w > 0:
+            pattern_weights[key] = round(w, 6)
+
+    return {
+        "group_labels": DECADE_LABELS,
+        "group_sizes": DECADE_SIZES,
+        "averages": averages,
+        "expected": expected,
+        "group_pct": group_pct,
+        "top_patterns": top_patterns,
+        "recent_top_patterns": recent_top_patterns,
+        "recent_window": recent_n,
+        "pattern_weights": pattern_weights,
+    }
+
+
+# ============================================================
 # 4. ペア分析（改善④: 直近ペアも分析）
 # ============================================================
 def analyze_pairs(draws):
@@ -567,41 +653,37 @@ def simulate_random_baseline(total_rounds: int, n_sim: int = 200000, seed_str: s
     }
 
 
-def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data, cycle_data, rf_scores_raw, lstm_scores_raw, draws, weights, mode_key=None, period_label=None):
-    """1つの予想を生成（v3: 10要素統合）"""
-    total_draws = len(draws)
-
-    # --- スコア計算 ---
-
+def _compute_base_number_scores(freq_data, pull_data, consec_data, cycle_data, rf_scores_raw, lstm_scores_raw, draws, weights):
+    """各数字(1-43)の正規化済み要素スコアと、それらの加重和(base_scores)、
+    合計値の統計・直近抽選番号をまとめて返す。標準モード(generate_prediction)と
+    帯配分予想(generate_decade_prediction)で完全に同一のスコアを共有するための共通処理。
+    base_scores はペア・ランダムを除いた8要素の加重和。"""
     # ① 出現頻度スコア（全期間）
     freq_scores = normalize({n: freq_data["counts"].get(str(n), 0) for n in range(1, 44)})
 
-    # ② 直近重み付き頻度スコア（改善: 直近100回+300回の加重平均）
+    # ② 直近重み付き頻度スコア（直近100回+300回の加重平均、直近100回を重視 0.6:0.4）
     recent_scores = {}
     for n in range(1, 44):
         r100 = float(freq_data["recent_100"].get(str(n), 0))
         r300 = float(freq_data["recent_300"].get(str(n), 0))
-        # 直近100回を重視（0.6:0.4）
         recent_scores[n] = r100 * 0.6 + r300 * 0.4
     recent_scores = normalize(recent_scores)
 
-    # ③ 干ばつスコア（改善: 平均間隔と比較した相対的な遅延度）
+    # ③ 干ばつスコア（平均間隔と比較した相対的な遅延度）
     drought_raw = {}
     for n in range(1, 44):
         current_drought = freq_data["drought"].get(str(n), 0)
         avg_interval = freq_data["avg_intervals"].get(str(n), 7)
-        # 平均間隔に対してどれだけ遅延しているか（1.0 = 平均通り、2.0 = 平均の2倍遅い）
         if avg_interval > 0:
             drought_raw[n] = current_drought / avg_interval
         else:
             drought_raw[n] = 0
     drought_scores = normalize(drought_raw)
 
-    # ④ 引っ張りスコア（改善: 直近N回の出現頻度でグラデーション化）
+    # ④ 引っ張りスコア（直近5回の出現をグラデーション加重）
     pull_scores = {}
     recent_5 = [set(d["numbers"]) for d in draws[-5:]]
     for n in range(1, 44):
-        # 直近5回での出現回数を加重（直近ほど重い）
         weighted_pull = 0.0
         weights_pull = [0.40, 0.25, 0.15, 0.12, 0.08]  # 最新→古い
         for i, nums in enumerate(reversed(recent_5)):
@@ -611,8 +693,7 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
     pull_scores = normalize(pull_scores)
 
     # ⑤ 連番スコア
-    consec_scores_raw = {n: consec_data["partner_counts"].get(str(n), 0) for n in range(1, 44)}
-    consec_base_scores = normalize(consec_scores_raw)
+    consec_base_scores = normalize({n: consec_data["partner_counts"].get(str(n), 0) for n in range(1, 44)})
 
     # ⑥ 周期スコア
     cycle_scores = normalize({n: cycle_data.get(str(n), {}).get("cycle_score", 0) for n in range(1, 44)})
@@ -623,8 +704,7 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
     # ⑧ LSTMスコア
     lstm_scores = normalize({n: lstm_scores_raw.get(n, 0.5) for n in range(1, 44)})
 
-    # ⑨ モンテカルロ信頼度スコア（ペア・ランダム要素を除く各スコアの加重和を確率として
-    #    重み付き非復元抽出を1万回シミュレーションし、各数字が選ばれた割合を算出）
+    # ペア・ランダムを除いた8要素の加重和
     base_scores = {
         n: (
             weights["freq"] * freq_scores.get(n, 0)
@@ -638,6 +718,51 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
         )
         for n in range(1, 44)
     }
+
+    # 合計値の統計（標準偏差ベース ±1σ）
+    sums = [sum(d["numbers"]) for d in draws]
+    avg_sum = sum(sums) / len(sums)
+    std_sum = math.sqrt(sum((s - avg_sum) ** 2 for s in sums) / len(sums))
+    sum_range = (avg_sum - std_sum, avg_sum + std_sum)
+
+    return {
+        "freq": freq_scores,
+        "recent": recent_scores,
+        "drought": drought_scores,
+        "pull": pull_scores,
+        "consec": consec_base_scores,
+        "cycle": cycle_scores,
+        "rf": rf_scores,
+        "lstm": lstm_scores,
+        "base_scores": base_scores,
+        "avg_sum": avg_sum,
+        "std_sum": std_sum,
+        "sum_range": sum_range,
+        "last_numbers": set(pull_data["last_draw_numbers"]),
+    }
+
+
+def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data, cycle_data, rf_scores_raw, lstm_scores_raw, draws, weights, mode_key=None, period_label=None):
+    """1つの予想を生成（v3: 10要素統合）"""
+    total_draws = len(draws)
+
+    # --- スコア計算（共通ヘルパー: 帯配分予想と同一スコアを共有） ---
+    sb = _compute_base_number_scores(
+        freq_data, pull_data, consec_data, cycle_data,
+        rf_scores_raw, lstm_scores_raw, draws, weights,
+    )
+    freq_scores = sb["freq"]
+    recent_scores = sb["recent"]
+    drought_scores = sb["drought"]
+    pull_scores = sb["pull"]
+    consec_base_scores = sb["consec"]
+    cycle_scores = sb["cycle"]
+    rf_scores = sb["rf"]
+    lstm_scores = sb["lstm"]
+    base_scores = sb["base_scores"]
+
+    # ⑨ モンテカルロ信頼度スコア（base_scores を確率として重み付き非復元抽出を
+    #    1万回シミュレーションし、各数字が選ばれた割合を算出）
     mc_seed = f"{date.today().isoformat()}_{mode_key}_{period_label}_mc"
     mc_confidence = monte_carlo_confidence(base_scores, n_trials=10000, seed_str=mc_seed)
 
@@ -645,13 +770,12 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
     pair_counts_all = pair_data.get("pair_counts", {})
     pair_counts_recent = pair_data.get("recent_pair_counts", {})
 
-    # 合計値の制約（改善⑥: 標準偏差ベース ±1σ）
-    sums = [sum(d["numbers"]) for d in draws]
-    avg_sum = sum(sums) / len(sums)
-    std_sum = math.sqrt(sum((s - avg_sum) ** 2 for s in sums) / len(sums))
-    sum_range = (avg_sum - std_sum, avg_sum + std_sum)
+    # 合計値の制約（改善⑥: 標準偏差ベース ±1σ、共通ヘルパーで算出済み）
+    avg_sum = sb["avg_sum"]
+    std_sum = sb["std_sum"]
+    sum_range = sb["sum_range"]
 
-    last_numbers = set(pull_data["last_draw_numbers"])
+    last_numbers = sb["last_numbers"]
 
     # --- 改善⑦: 複数候補から最良を選ぶ（貪欲法のバイアス軽減） ---
     NUM_TRIALS = 20
@@ -997,7 +1121,188 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
     }
 
 
-def run_predictions(freq_data, pull_data, zone_data, pair_data, consec_data, cycle_data, rf_scores, lstm_scores, draws, period_label="all"):
+# ============================================================
+# 9-b. 帯配分予想（10刻みグループの配分を制約に最終6個を選ぶ）
+# ============================================================
+DECADE_MODE_KEY = "decade_pattern"
+DECADE_MODE_NAME = "帯配分予想"
+# グループ内でどの数字を選ぶかの評価に使う重み（バランス重視の基準重みを流用）
+DECADE_MODE_WEIGHTS = MODES["balanced"]
+DECADE_JITTER = 0.06  # 同グループ内の同点崩し・日替わりの探索揺らぎ
+
+
+def _factor_phrase(factor, n, freq_data, draws, cycle_data, rf_scores_raw, lstm_scores_raw, total_draws):
+    """1要素分の選出理由フレーズを返す（帯配分予想の理由文用の簡易版）。"""
+    freq_count = freq_data["counts"].get(str(n), 0)
+    freq_pct = freq_data["percentages"].get(str(n), 0)
+    r100_pct = freq_data["recent_100"].get(str(n), 0)
+    drought_val = freq_data["drought"].get(str(n), 0)
+    avg_interval = freq_data["avg_intervals"].get(str(n), 7)
+
+    if factor == "freq":
+        return f"全{total_draws}回中{freq_count}回出現（{freq_pct}%）と出現頻度が高い"
+    if factor == "recent":
+        return f"直近100回で{r100_pct}%と最近の出現率が高い"
+    if factor == "drought":
+        ratio = round(drought_val / avg_interval, 1) if avg_interval > 0 else 0
+        return f"平均{avg_interval:.0f}回間隔に対し{drought_val}回未出現（{ratio}倍の遅延）"
+    if factor == "pull":
+        recent_count = sum(1 for d in draws[-5:] if n in d["numbers"])
+        return f"直近5回中{recent_count}回出現で勢いあり"
+    if factor == "consec":
+        return "連番を含む抽選で出やすい傾向"
+    if factor == "cycle":
+        dc = cycle_data.get(str(n), {}).get("dominant_cycle", "?")
+        return f"約{dc}回周期の出現タイミングに該当"
+    if factor == "rf":
+        return f"ランダムフォレストが出現確率{rf_scores_raw.get(n, 0.5):.1%}と予測"
+    if factor == "lstm":
+        return f"LSTMが時系列から出現確率{lstm_scores_raw.get(n, 0.5):.1%}と予測"
+    return ""
+
+
+def generate_decade_prediction(freq_data, pull_data, pair_data, consec_data, cycle_data, rf_scores_raw, lstm_scores_raw, draws, decade_data, weights, mode_key=None, period_label=None):
+    """2段構えの予想: ①過去頻度で重み付き抽選して今回の目標配分(例:2-1-1-1-1)を決め、
+    ②各10刻みグループ内でグループ内スコア上位を目標個数だけ選んで最終6個を組み立てる。"""
+    total_draws = len(draws)
+    sb = _compute_base_number_scores(
+        freq_data, pull_data, consec_data, cycle_data,
+        rf_scores_raw, lstm_scores_raw, draws, weights,
+    )
+    base_scores = sb["base_scores"]
+    avg_sum = sb["avg_sum"]
+    std_sum = sb["std_sum"]
+    sum_range = sb["sum_range"]
+    last_numbers = sb["last_numbers"]
+
+    per_factor = {f: sb[f] for f in ("freq", "recent", "drought", "pull", "consec", "cycle", "rf", "lstm")}
+
+    # --- ① 目標配分をサンプリング（過去頻度で重み付き、日替わりシード固定で決定的） ---
+    rng = random.Random(f"{date.today().isoformat()}_{mode_key}_{period_label}_decade")
+    pattern_weights = decade_data.get("pattern_weights", {})
+    if pattern_weights:
+        # キーをソートしてサンプリング順を固定（set由来のハッシュシード依存を排除し、
+        # 同一データ・同一日付で常に同じ目標配分になる決定性を担保）
+        keys = sorted(pattern_weights.keys())
+        chosen_key = rng.choices(keys, weights=[pattern_weights[k] for k in keys], k=1)[0]
+        target_counts = [int(x) for x in chosen_key.split("-")]
+    else:
+        chosen_key = "2-1-1-2-0"
+        target_counts = [2, 1, 1, 2, 0]
+
+    hist_pct = next(
+        (tp["percentage"] for tp in decade_data.get("top_patterns", []) if tp["pattern"] == chosen_key),
+        None,
+    )
+
+    # --- ② 各グループ内でスコア上位を目標個数だけ選出（軽い揺らぎで日替わり探索） ---
+    mc_seed = f"{date.today().isoformat()}_{mode_key}_{period_label}_decade_mc"
+    mc_confidence = monte_carlo_confidence(base_scores, n_trials=10000, seed_str=mc_seed)
+
+    selected = []
+    sel_reasons = {}
+    for gi, quota in enumerate(target_counts):
+        if quota <= 0:
+            continue
+        lo, hi = DECADE_GROUPS[gi]
+        pool = list(range(lo, hi + 1))
+        pool.sort(key=lambda x: base_scores.get(x, 0) + rng.random() * DECADE_JITTER, reverse=True)
+        for n in pool[:quota]:
+            selected.append(n)
+
+    # 安全網: 何らかの理由で6個に満たない場合はベーススコア上位で補完
+    if len(selected) < 6:
+        for n in sorted(range(1, 44), key=lambda x: base_scores.get(x, 0), reverse=True):
+            if n not in selected:
+                selected.append(n)
+            if len(selected) == 6:
+                break
+
+    selected = sorted(selected[:6])
+
+    # 各数字の要素スコアを記録
+    for n in selected:
+        raw = {f: per_factor[f].get(n, 0) for f in per_factor}
+        raw["pair"] = 0.0
+        factor_scores = {f: raw[f] * weights[f] for f in per_factor}
+        sel_reasons[str(n)] = {
+            "total_score": base_scores.get(n, 0),
+            "factor_scores": factor_scores,
+            "raw_scores": {**raw, "random": 0.0},
+        }
+
+    # --- 選出理由の文章生成（帯配分の根拠 + グループ内で効いた要素） ---
+    reasons = {}
+    for n in selected:
+        info = sel_reasons[str(n)]
+        gi = get_decade(n)
+        top_factor = max(info["factor_scores"], key=info["factor_scores"].get)
+        parts = [f"目標配分 {chosen_key} の「{DECADE_LABELS[gi]}」枠（{target_counts[gi]}個）からグループ内スコア上位で選出"]
+        phrase = _factor_phrase(top_factor, n, freq_data, draws, cycle_data, rf_scores_raw, lstm_scores_raw, total_draws)
+        if phrase:
+            parts.append(phrase)
+        reasons[str(n)] = {
+            "score": round(info["total_score"], 4),
+            "top_factor": top_factor,
+            "reason_text": "。".join(parts) + "。",
+            "details": {k: round(v, 4) for k, v in info["raw_scores"].items()},
+            "monte_carlo_pct": mc_confidence.get(n, 0.0),
+        }
+
+    # --- ボーナス数字（残りのベーススコア最上位） ---
+    bonus_candidates = sorted(
+        (n for n in range(1, 44) if n not in selected),
+        key=lambda x: base_scores.get(x, 0),
+        reverse=True,
+    )
+    bonus_number = bonus_candidates[0] if bonus_candidates else None
+    bonus_reason = ""
+    if bonus_number:
+        bn = bonus_number
+        b_parts = ["本数字6個に次ぐ総合スコアで選出"]
+        b_r100 = freq_data["recent_100"].get(str(bn), 0)
+        b_freq_pct = freq_data["percentages"].get(str(bn), 0)
+        if float(b_r100) > float(b_freq_pct):
+            b_parts.append(f"直近100回の出現率{b_r100}%で上昇傾向")
+        elif float(b_freq_pct) > 14:
+            b_parts.append(f"出現率{b_freq_pct}%と高頻度")
+        if bn in last_numbers:
+            b_parts.append("前回も出現")
+        bonus_reason = "。".join(b_parts) + "。"
+
+    # --- メトリクス ---
+    odds = sum(1 for x in selected if x % 2 == 1)
+    evens = 6 - odds
+    zones3 = Counter(get_zone(x) for x in selected)
+    decade_counts = [0] * 5
+    for x in selected:
+        decade_counts[get_decade(x)] += 1
+
+    return {
+        "numbers": selected,
+        "bonus": bonus_number,
+        "bonus_reason": bonus_reason,
+        "reasons": reasons,
+        "metrics": {
+            "odd_even": f"{odds}:{evens}",
+            "zones": f"{zones3.get('low',0)}-{zones3.get('mid',0)}-{zones3.get('high',0)}",
+            "decade": "-".join(map(str, decade_counts)),
+            "target_decade": chosen_key,
+            "sum": sum(selected),
+            "avg_sum": round(avg_sum, 1),
+            "sum_std": round(std_sum, 1),
+            "sum_range": f"{sum_range[0]:.0f}〜{sum_range[1]:.0f}",
+        },
+        "monte_carlo": {str(k): v for k, v in mc_confidence.items()},
+        "target_pattern": {
+            "label": chosen_key,
+            "counts": target_counts,
+            "historical_pct": hist_pct,
+        },
+    }
+
+
+def run_predictions(freq_data, pull_data, zone_data, pair_data, consec_data, cycle_data, rf_scores, lstm_scores, draws, decade_data, period_label="all"):
     predictions = {}
     for mode_key, weights in MODES.items():
         random.seed(f"{date.today().isoformat()}_{mode_key}_{period_label}")
@@ -1006,15 +1311,24 @@ def run_predictions(freq_data, pull_data, zone_data, pair_data, consec_data, cyc
             mode_key=mode_key, period_label=period_label,
         )
         predictions[mode_key]["mode_name"] = MODE_NAMES[mode_key]
+
+    # 帯配分予想（10刻みグループの配分を制約に選出）
+    random.seed(f"{date.today().isoformat()}_{DECADE_MODE_KEY}_{period_label}")
+    predictions[DECADE_MODE_KEY] = generate_decade_prediction(
+        freq_data, pull_data, pair_data, consec_data, cycle_data, rf_scores, lstm_scores, draws, decade_data, DECADE_MODE_WEIGHTS,
+        mode_key=DECADE_MODE_KEY, period_label=period_label,
+    )
+    predictions[DECADE_MODE_KEY]["mode_name"] = DECADE_MODE_NAME
     return predictions
 
 
 def analyze_period(draws, period_label="all"):
     """指定された抽選データに対して全分析 + 予想を実行"""
-    print(f"  Frequency/Pull/Zone/Pair/Consecutive...")
+    print(f"  Frequency/Pull/Zone/Decade/Pair/Consecutive...")
     freq = analyze_frequency(draws)
     pull = analyze_pull(draws)
     zone = analyze_zone(draws)
+    decade = analyze_decade(draws)
     pairs = analyze_pairs(draws)
     consec = analyze_consecutive(draws)
 
@@ -1028,7 +1342,7 @@ def analyze_period(draws, period_label="all"):
     lstm_scores = predict_lstm(draws)
 
     print(f"  Generating predictions...")
-    predictions = run_predictions(freq, pull, zone, pairs, consec, cycle, rf_scores, lstm_scores, draws, period_label)
+    predictions = run_predictions(freq, pull, zone, pairs, consec, cycle, rf_scores, lstm_scores, draws, decade, period_label)
 
     sums = [sum(d["numbers"]) for d in draws]
     odds_counts = [sum(1 for n in d["numbers"] if n % 2 == 1) for d in draws]
@@ -1037,6 +1351,8 @@ def analyze_period(draws, period_label="all"):
         "frequency": freq,
         "pull": pull,
         "zone": zone,
+        # 内部専用の pattern_weights は出力から除外（JSONを軽く保つ）
+        "decade": {k: v for k, v in decade.items() if k != "pattern_weights"},
         "consecutive": consec,
         "pairs": {
             "top_pairs": pairs["top_pairs"],

@@ -43,6 +43,7 @@ function renderAll() {
   renderFrequency();
   renderPull();
   renderZone();
+  renderDecade();
   renderPair();
   renderRecent();
   renderArchive();
@@ -134,7 +135,7 @@ function createSmallBall(num, cls = "ball-gold") {
 // AI Prediction
 // ============================================================
 // 予想モードの表示順（データの mode_name をそのまま見出しに使う）
-const MODE_ORDER = ["balanced", "frequency_heavy", "pull_heavy", "zone_balanced", "pair_heavy", "ml_heavy"];
+const MODE_ORDER = ["balanced", "frequency_heavy", "pull_heavy", "zone_balanced", "pair_heavy", "ml_heavy", "decade_pattern"];
 
 function renderPrediction() {
   const container = document.getElementById("predictionResult");
@@ -191,7 +192,7 @@ function renderPrediction() {
             <div class="period-row-main">
               <span class="period-tag">${pInfo.label}</span>
               <div class="balls-row compact">${balls}</div>
-              <span class="period-metrics">奇偶 ${pred.metrics.odd_even} ｜ 合計 ${pred.metrics.sum}</span>
+              <span class="period-metrics">奇偶 ${pred.metrics.odd_even} ｜ 合計 ${pred.metrics.sum}${pred.metrics.decade ? ` ｜ 帯配分 ${pred.metrics.decade}` : ""}</span>
             </div>
             <button class="reasons-toggle sm" onclick="toggleReasons(this)">選出根拠 ▾</button>
             <div class="reasons-detail">${reasonsHtml}</div>
@@ -396,6 +397,68 @@ function renderZone() {
       <tbody>${rows}</tbody>
     </table>
   `;
+}
+
+// ============================================================
+// Decade（10刻み帯配分）
+// ============================================================
+function renderDecade() {
+  const dec = getPeriodData().decade;
+  const el = document.getElementById("decadeAnalysis");
+  if (!dec || !el) return;
+
+  const labels = dec.group_labels;
+  const maxVal = Math.max(...dec.averages, ...dec.expected, 0.01);
+  const colors = ["#e08a7a", "#d6b24e", "#57b0a5", "#7a9ce0", "#b07ae0"];
+
+  const bars = labels
+    .map((lab, i) => {
+      const avg = dec.averages[i];
+      const exp = dec.expected[i];
+      const pct = (avg / maxVal) * 100;
+      const expPct = (exp / maxVal) * 100;
+      return `
+        <div class="decade-bar-row">
+          <span class="decade-bar-label">${lab}</span>
+          <div class="decade-bar-track">
+            <div class="decade-bar-fill" style="width:${pct}%;background:${colors[i]}"></div>
+            <span class="decade-bar-exp" style="left:${expPct}%" title="理論期待値 ${exp}個"></span>
+          </div>
+          <span class="decade-bar-val">平均 <b>${avg}</b> <span class="decade-bar-exp-txt">/ 期待 ${exp}</span></span>
+        </div>`;
+    })
+    .join("");
+
+  const patRows = (list) =>
+    list
+      .map(
+        (p, i) => `<tr>
+          <td style="color:var(--gold);font-weight:bold">${i + 1}</td>
+          <td>${p.pattern}</td>
+          <td>${p.count}回</td>
+          <td>${p.percentage}%</td>
+        </tr>`
+      )
+      .join("");
+
+  const recentSection =
+    dec.recent_top_patterns && dec.recent_top_patterns.length
+      ? `<h4 class="decade-subhead">直近${dec.recent_window}回の配分パターン</h4>
+         <table class="data-table">
+           <thead><tr><th>#</th><th>配分</th><th>回数</th><th>割合</th></tr></thead>
+           <tbody>${patRows(dec.recent_top_patterns)}</tbody>
+         </table>`
+      : "";
+
+  el.innerHTML = `
+    <p class="decade-hint">各抽選で 1-10 / 11-20 / 21-30 / 31-40 / 41-43 から何個出たか。点線マーカーは一様抽選を仮定した理論期待値。</p>
+    <div class="decade-bars">${bars}</div>
+    <h4 class="decade-subhead">配分パターン頻度TOP（全期間）</h4>
+    <table class="data-table">
+      <thead><tr><th>#</th><th>配分</th><th>回数</th><th>割合</th></tr></thead>
+      <tbody>${patRows(dec.top_patterns)}</tbody>
+    </table>
+    ${recentSection}`;
 }
 
 // ============================================================
