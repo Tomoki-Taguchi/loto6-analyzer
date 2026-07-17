@@ -154,12 +154,14 @@
       <div class="card">
         <p class="ball-legend">● 本数字　○ ボーナス数字　｜　各回の当選番号を1〜43に展開し、出た数字のマスにマークを表示</p>
         <div class="grid-rows-selector" id="gridRowsSelector"></div>
+        <div class="grid-hotcold" id="gridHotCold"></div>
         <div class="grid-wrap"><div id="gridTable"></div></div>
       </div>
       <div class="glossary-box">
         <h4>📖 用語説明</h4>
         <dl class="glossary">
           <dt>出目表（当選数字状況表）</dt><dd>各回の当選番号を1〜43の列に展開し、出た数字のマスにマークを表示。縦に最近の抽選を並べることで、どの数字がどの回に出ているか・最近の偏りや流れが一目でわかる。●が本数字、○がボーナス数字。右端に合計（本数字6個の和）と奇偶比を表示。</dd>
+          <dt>出現回数・ホット/コールド</dt><dd>ヘッダー(1〜43)と最下段の数字は、選択中の期間で各数字が「何回中何回」本数字として出たかの回数。赤いほど出現が多い（ホット）、青いほど少ない（コールド）。表の上部に上位5つのホット・コールドナンバーを表示。表示件数（直近30〜全期間）に連動して集計。</dd>
         </dl>
       </div>
     </section>

@@ -561,6 +561,25 @@ function setGridRows(v) {
   renderGrid();
 }
 
+/** 出現回数からヒートマップ背景色を生成（白にブレンドして不透明化 → 固定セルでも安全）。
+ *  多いほど赤（ホット）、少ないほど青（コールド）。 */
+function gridHeatBg(c, minC, maxC) {
+  if (maxC === minC) return "";
+  const t = (c - minC) / (maxC - minC); // 0=コールド .. 1=ホット
+  let r, g, b, a;
+  if (t >= 0.5) {
+    r = 224; g = 90; b = 74; // ホット（赤）
+    a = (t - 0.5) * 2 * 0.5;
+  } else {
+    r = 90; g = 140; b = 224; // コールド（青）
+    a = (0.5 - t) * 2 * 0.5;
+  }
+  const R = Math.round(255 + (r - 255) * a);
+  const G = Math.round(255 + (g - 255) * a);
+  const B = Math.round(255 + (b - 255) * a);
+  return `background:rgb(${R},${G},${B})`;
+}
+
 function renderGrid() {
   const el = document.getElementById("gridTable");
   if (!el || !rawData || !rawData.draws) return;
@@ -577,10 +596,37 @@ function renderGrid() {
   const all = rawData.draws;
   const count = gridRows === "all" ? all.length : Math.min(gridRows, all.length);
   const draws = all.slice(-count).reverse(); // 新しい順（最新が上）
+  const shown = draws.length;
 
-  // ヘッダ: 回号 / 日付 / 1〜43 / 合計 / 奇偶
+  // 各数字の本数字としての出現回数を集計（選択中の期間内）
+  const freq = new Array(44).fill(0);
+  draws.forEach((d) => d.numbers.forEach((n) => freq[n]++));
+  let minC = Infinity;
+  let maxC = 0;
+  for (let i = 1; i <= 43; i++) {
+    if (freq[i] < minC) minC = freq[i];
+    if (freq[i] > maxC) maxC = freq[i];
+  }
+
+  // ホット/コールド TOP5
+  const ranked = [];
+  for (let i = 1; i <= 43; i++) ranked.push({ n: i, c: freq[i] });
+  const hot = [...ranked].sort((a, b) => b.c - a.c || a.n - b.n).slice(0, 5);
+  const cold = [...ranked].sort((a, b) => a.c - b.c || a.n - b.n).slice(0, 5);
+
+  const hcEl = document.getElementById("gridHotCold");
+  if (hcEl) {
+    const hotHtml = hot.map((x) => `<span class="hc-item hc-hot">${x.n}<small>${x.c}回</small></span>`).join("");
+    const coldHtml = cold.map((x) => `<span class="hc-item hc-cold">${x.n}<small>${x.c}回</small></span>`).join("");
+    hcEl.innerHTML =
+      `<div class="hc-row"><span class="hc-label">🔥 ホット</span>${hotHtml}</div>` +
+      `<div class="hc-row"><span class="hc-label">❄️ コールド</span>${coldHtml}</div>` +
+      `<div class="hc-note">直近${shown}回中の本数字の出現回数。ヘッダー(1〜43)と最下段の色・数字も同じ集計。</div>`;
+  }
+
+  // ヘッダ: 回号 / 日付 / 1〜43（ヒート着色）/ 合計 / 奇偶
   let head = `<tr><th class="grid-col-round">回号</th><th>日付</th>`;
-  for (let i = 1; i <= 43; i++) head += `<th class="grid-num-head">${i}</th>`;
+  for (let i = 1; i <= 43; i++) head += `<th class="grid-num-head" style="${gridHeatBg(freq[i], minC, maxC)}">${i}</th>`;
   head += `<th>合計</th><th>奇偶</th></tr>`;
 
   // 各行
@@ -600,7 +646,12 @@ function renderGrid() {
     })
     .join("");
 
-  el.innerHTML = `<table class="grid-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  // フッタ: 出現回数（ヒート着色、下部に固定表示）
+  let foot = `<tr class="grid-foot"><td class="grid-col-round">出現回数</td><td class="grid-foot-total">${shown}回中</td>`;
+  for (let i = 1; i <= 43; i++) foot += `<td class="grid-count" style="${gridHeatBg(freq[i], minC, maxC)}">${freq[i]}</td>`;
+  foot += `<td></td><td></td></tr>`;
+
+  el.innerHTML = `<table class="grid-table"><thead>${head}</thead><tbody>${body}</tbody><tfoot>${foot}</tfoot></table>`;
 }
 
 // ============================================================

@@ -1176,3 +1176,81 @@ footer {
 .grid-table tbody tr:hover td {
   background: rgba(196, 154, 63, 0.12);
 }
+
+/* 出現回数フッタ（下部に固定） */
+.grid-table tfoot td {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  font-weight: bold;
+  background: var(--bg-secondary);
+  border-top: 2px solid var(--gold);
+}
+
+.grid-table tfoot td.grid-col-round {
+  left: 0;
+  z-index: 3;
+  color: var(--gold);
+}
+
+.grid-foot-total {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.grid-count {
+  color: #3a3843;
+}
+
+/* ホット・コールド サマリ */
+.grid-hotcold {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-bottom: 1rem;
+}
+
+.hc-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.hc-label {
+  font-weight: 700;
+  font-size: 0.82rem;
+  min-width: 5.5rem;
+}
+
+.hc-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.2rem;
+  padding: 0.18rem 0.55rem;
+  border-radius: 0.4rem;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.hc-item small {
+  font-weight: 400;
+  font-size: 0.7rem;
+  opacity: 0.85;
+}
+
+.hc-hot {
+  background: rgba(224, 90, 74, 0.15);
+  color: #b5432f;
+}
+
+.hc-cold {
+  background: rgba(90, 140, 224, 0.15);
+  color: #3f68b0;
+}
+
+.hc-note {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
