@@ -451,7 +451,7 @@ function renderDecade() {
       : "";
 
   el.innerHTML = `
-    <p class="decade-hint">各抽選で 1-10 / 11-20 / 21-30 / 31-40 / 41-43 から何個出たか。点線マーカーは一様抽選を仮定した理論期待値。</p>
+    <p class="decade-hint">各抽選で 1-11 / 12-22 / 23-33 / 34-43 から何個出たか。点線マーカーは一様抽選を仮定した理論期待値。</p>
     <div class="decade-bars">${bars}</div>
     <h4 class="decade-subhead">配分パターン頻度TOP（全期間）</h4>
     <table class="data-table">

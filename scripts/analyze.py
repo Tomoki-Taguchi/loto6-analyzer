@@ -162,54 +162,54 @@ def analyze_zone(draws):
 
 
 # ============================================================
-# 3-b. 10刻み帯（デカード）配分分析
+# 3-b. 11刻み帯配分分析
 # ============================================================
-# 1-10 / 11-20 / 21-30 / 31-40 / 41-43 の5グループ。40番台は3個しかない。
-DECADE_GROUPS = [(1, 10), (11, 20), (21, 30), (31, 40), (41, 43)]
-DECADE_LABELS = ["1-10", "11-20", "21-30", "31-40", "41-43"]
-DECADE_SIZES = [hi - lo + 1 for lo, hi in DECADE_GROUPS]
+# 1-11 / 12-22 / 23-33 / 34-43 の4グループ。43=11+11+11+10 でほぼ均等に分割できる
+# （10刻みだと 41-43 が3個だけの極端に小さい帯になるため、11刻みの方が自然）。
+DECADE_GROUPS = [(1, 11), (12, 22), (23, 33), (34, 43)]
+DECADE_LABELS = ["1-11", "12-22", "23-33", "34-43"]
+DECADE_SIZES = [hi - lo + 1 for lo, hi in DECADE_GROUPS]  # [11, 11, 11, 10]
 DECADE_RECENT_WINDOW = 100   # 直近トレンド集計に使うウィンドウ
 DECADE_RECENT_BLEND = 0.35   # 目標配分サンプリングでの「直近」の重み（全期間 0.65 : 直近 0.35）
 
 
 def get_decade(n):
-    """数字を10刻みグループのインデックス(0-4)に変換"""
-    if n <= 10:
+    """数字を11刻みグループのインデックス(0-3)に変換"""
+    if n <= 11:
         return 0
-    elif n <= 20:
+    elif n <= 22:
         return 1
-    elif n <= 30:
+    elif n <= 33:
         return 2
-    elif n <= 40:
-        return 3
-    return 4
+    return 3
 
 
 def analyze_decade(draws):
-    """各抽選を10刻み5グループの配分パターン(例:2-1-1-2-0)として集計し、
+    """各抽選を11刻み4グループの配分パターン(例:2-1-2-1)として集計し、
     グループ別平均・期待値・上位パターン(全期間/直近)と、予想でサンプリングに使う
     配分の重み(全期間+直近ブレンド)を返す。"""
     n_draws = len(draws)
-    totals = [0] * 5
+    n_groups = len(DECADE_GROUPS)
+    totals = [0] * n_groups
     pattern_counter = Counter()
     recent_counter = Counter()
     recent_n = min(DECADE_RECENT_WINDOW, n_draws)
 
     for i, d in enumerate(draws):
-        counts = [0] * 5
+        counts = [0] * n_groups
         for num in d["numbers"]:
             counts[get_decade(num)] += 1
         key = "-".join(map(str, counts))
         pattern_counter[key] += 1
-        for gi in range(5):
+        for gi in range(n_groups):
             totals[gi] += counts[gi]
         if i >= n_draws - recent_n:
             recent_counter[key] += 1
 
-    averages = [round(totals[gi] / n_draws, 2) for gi in range(5)]
+    averages = [round(totals[gi] / n_draws, 2) for gi in range(n_groups)]
     # 一様（公平なくじ）を仮定した理論期待値: 6 * グループのサイズ / 43
-    expected = [round(6 * DECADE_SIZES[gi] / 43, 2) for gi in range(5)]
-    group_pct = [round(totals[gi] / (n_draws * 6) * 100, 1) for gi in range(5)]
+    expected = [round(6 * DECADE_SIZES[gi] / 43, 2) for gi in range(n_groups)]
+    group_pct = [round(totals[gi] / (n_draws * 6) * 100, 1) for gi in range(n_groups)]
 
     def to_list(counter, denom, top):
         return [
@@ -1122,7 +1122,7 @@ def generate_prediction(freq_data, pull_data, zone_data, pair_data, consec_data,
 
 
 # ============================================================
-# 9-b. 帯配分予想（10刻みグループの配分を制約に最終6個を選ぶ）
+# 9-b. 帯配分予想（11刻みグループの配分を制約に最終6個を選ぶ）
 # ============================================================
 DECADE_MODE_KEY = "decade_pattern"
 DECADE_MODE_NAME = "帯配分予想"
@@ -1162,8 +1162,8 @@ def _factor_phrase(factor, n, freq_data, draws, cycle_data, rf_scores_raw, lstm_
 
 
 def generate_decade_prediction(freq_data, pull_data, pair_data, consec_data, cycle_data, rf_scores_raw, lstm_scores_raw, draws, decade_data, weights, mode_key=None, period_label=None):
-    """2段構えの予想: ①過去頻度で重み付き抽選して今回の目標配分(例:2-1-1-1-1)を決め、
-    ②各10刻みグループ内でグループ内スコア上位を目標個数だけ選んで最終6個を組み立てる。"""
+    """2段構えの予想: ①過去頻度で重み付き抽選して今回の目標配分(例:2-1-2-1)を決め、
+    ②各11刻みグループ内でグループ内スコア上位を目標個数だけ選んで最終6個を組み立てる。"""
     total_draws = len(draws)
     sb = _compute_base_number_scores(
         freq_data, pull_data, consec_data, cycle_data,
@@ -1187,8 +1187,8 @@ def generate_decade_prediction(freq_data, pull_data, pair_data, consec_data, cyc
         chosen_key = rng.choices(keys, weights=[pattern_weights[k] for k in keys], k=1)[0]
         target_counts = [int(x) for x in chosen_key.split("-")]
     else:
-        chosen_key = "2-1-1-2-0"
-        target_counts = [2, 1, 1, 2, 0]
+        chosen_key = "2-1-2-1"
+        target_counts = [2, 1, 2, 1]
 
     hist_pct = next(
         (tp["percentage"] for tp in decade_data.get("top_patterns", []) if tp["pattern"] == chosen_key),
@@ -1274,7 +1274,7 @@ def generate_decade_prediction(freq_data, pull_data, pair_data, consec_data, cyc
     odds = sum(1 for x in selected if x % 2 == 1)
     evens = 6 - odds
     zones3 = Counter(get_zone(x) for x in selected)
-    decade_counts = [0] * 5
+    decade_counts = [0] * len(DECADE_GROUPS)
     for x in selected:
         decade_counts[get_decade(x)] += 1
 
