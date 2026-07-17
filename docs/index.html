@@ -29,6 +29,7 @@
     <button class="tab" data-tab="zone">🎯 数字帯</button>
     <button class="tab" data-tab="pair">💎 ペア</button>
     <button class="tab" data-tab="recent">🎱 直近結果</button>
+    <button class="tab" data-tab="grid">📋 出目表</button>
     <button class="tab" data-tab="montecarlo">🎲 モンテカルロ信頼度</button>
     <button class="tab" data-tab="archive">📁 アーカイブ</button>
   </nav>
@@ -145,6 +146,21 @@
     <section id="tab-recent" class="tab-content">
       <div class="card">
         <div id="recentTable"></div>
+      </div>
+    </section>
+
+    <!-- 出目表（当選数字状況表） -->
+    <section id="tab-grid" class="tab-content">
+      <div class="card">
+        <p class="ball-legend">● 本数字　○ ボーナス数字　｜　各回の当選番号を1〜43に展開し、出た数字のマスにマークを表示</p>
+        <div class="grid-rows-selector" id="gridRowsSelector"></div>
+        <div class="grid-wrap"><div id="gridTable"></div></div>
+      </div>
+      <div class="glossary-box">
+        <h4>📖 用語説明</h4>
+        <dl class="glossary">
+          <dt>出目表（当選数字状況表）</dt><dd>各回の当選番号を1〜43の列に展開し、出た数字のマスにマークを表示。縦に最近の抽選を並べることで、どの数字がどの回に出ているか・最近の偏りや流れが一目でわかる。●が本数字、○がボーナス数字。右端に合計（本数字6個の和）と奇偶比を表示。</dd>
+        </dl>
       </div>
     </section>
 

@@ -46,6 +46,7 @@ function renderAll() {
   renderDecade();
   renderPair();
   renderRecent();
+  renderGrid();
   renderArchive();
   renderMonteCarlo();
 }
@@ -72,8 +73,10 @@ function updatePeriodVisibility() {
   const section = document.getElementById("periodSection");
   if (!section || section.dataset.ready !== "1") return;
   const activeTab = document.querySelector(".tab.active");
-  const isPrediction = activeTab && activeTab.dataset.tab === "prediction";
-  section.style.display = isPrediction ? "none" : "block";
+  // AI予想・出目表は期間スライダーを使わない（各自の期間指定を持つ）ので隠す
+  const tab = activeTab && activeTab.dataset.tab;
+  const hideSlider = tab === "prediction" || tab === "grid";
+  section.style.display = hideSlider ? "none" : "block";
 }
 
 // ============================================================
@@ -541,6 +544,63 @@ function renderRecent() {
       <tbody>${rows}</tbody>
     </table>
   `;
+}
+
+// ============================================================
+// Grid（出目表 / 当選数字状況表）
+// ============================================================
+const GRID_ROW_OPTIONS = [30, 50, 100, 300, "all"];
+let gridRows = 50;
+
+function gridRowsLabel(v) {
+  return v === "all" ? "全期間" : `直近${v}回`;
+}
+
+function setGridRows(v) {
+  gridRows = v;
+  renderGrid();
+}
+
+function renderGrid() {
+  const el = document.getElementById("gridTable");
+  if (!el || !rawData || !rawData.draws) return;
+
+  // 表示件数セレクタ
+  const selEl = document.getElementById("gridRowsSelector");
+  if (selEl) {
+    selEl.innerHTML = GRID_ROW_OPTIONS.map((v) => {
+      const arg = v === "all" ? "'all'" : v;
+      return `<button class="grid-rows-btn ${v === gridRows ? "active" : ""}" onclick="setGridRows(${arg})">${gridRowsLabel(v)}</button>`;
+    }).join("");
+  }
+
+  const all = rawData.draws;
+  const count = gridRows === "all" ? all.length : Math.min(gridRows, all.length);
+  const draws = all.slice(-count).reverse(); // 新しい順（最新が上）
+
+  // ヘッダ: 回号 / 日付 / 1〜43 / 合計 / 奇偶
+  let head = `<tr><th class="grid-col-round">回号</th><th>日付</th>`;
+  for (let i = 1; i <= 43; i++) head += `<th class="grid-num-head">${i}</th>`;
+  head += `<th>合計</th><th>奇偶</th></tr>`;
+
+  // 各行
+  const body = draws
+    .map((d) => {
+      const nums = new Set(d.numbers);
+      let tds = `<td class="grid-col-round">第${d.round}回</td><td class="grid-date">${d.date}</td>`;
+      for (let i = 1; i <= 43; i++) {
+        if (nums.has(i)) tds += `<td class="grid-hit">●</td>`;
+        else if (i === d.bonus) tds += `<td class="grid-bonus">○</td>`;
+        else tds += `<td></td>`;
+      }
+      const sum = d.numbers.reduce((a, b) => a + b, 0);
+      const odds = d.numbers.filter((x) => x % 2 === 1).length;
+      tds += `<td class="grid-sum">${sum}</td><td>${odds}:${6 - odds}</td>`;
+      return `<tr>${tds}</tr>`;
+    })
+    .join("");
+
+  el.innerHTML = `<table class="grid-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
 }
 
 // ============================================================
