@@ -1,0 +1,73 @@
+name: Add LOTO6 Result (manual)
+
+# GitHub の Actions 画面 →「Add LOTO6 Result (manual)」→「Run workflow」から
+# 抽選結果を手入力すると、データに追記 → フル分析（RF/LSTM込み）→ 自動 commit/push まで行い、
+# サイトに次回予想が反映される。自動スクレイピング（update.yml）を待たずに更新したいとき用。
+on:
+  workflow_dispatch:
+    inputs:
+      numbers:
+        description: '本数字6個（スペース or カンマ区切り 例: 3 8 13 14 16 43）'
+        required: true
+        type: string
+      bonus:
+        description: 'ボーナス数字 1個（例: 26）'
+        required: true
+        type: string
+      round:
+        description: '回号（空欄なら最新+1に自動設定）'
+        required: false
+        type: string
+      date:
+        description: '抽選日 YYYY-MM-DD（空欄なら本日）'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+# 同時実行を1本に制限（データ更新の競合を防ぐ）
+concurrency:
+  group: loto6-data-write
+  cancel-in-progress: false
+
+jobs:
+  add-result:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PyTorch CPU
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install other dependencies
+        run: pip install -r scripts/requirements.txt
+
+      # 入力値はシェルインジェクション対策で env 経由で渡す（直接展開しない）
+      - name: Add manual result
+        env:
+          IN_NUMBERS: ${{ inputs.numbers }}
+          IN_BONUS: ${{ inputs.bonus }}
+          IN_ROUND: ${{ inputs.round }}
+          IN_DATE: ${{ inputs.date }}
+        run: |
+          python scripts/add_result.py \
+            --numbers "$IN_NUMBERS" \
+            --bonus "$IN_BONUS" \
+            --round "$IN_ROUND" \
+            --date "$IN_DATE"
+
+      - name: Run analysis
+        run: python scripts/analyze.py
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/data/
+          git diff --staged --quiet || git commit -m "Add LOTO6 result (manual) $(date -u +%Y-%m-%d)"
+          git push
