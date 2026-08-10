@@ -193766,7 +193766,7 @@
   {
     "predicted_round": 2127,
     "data_up_to_round": 2126,
-    "generated_at": "2026-08-10T02:07:13.235637",
+    "generated_at": "2026-08-10T11:21:00.061349",
     "actual": null,
     "verified": false,
     "predictions_by_period": {
@@ -203726,7 +203726,7 @@
                   "consec": 0.6897,
                   "cycle": 0.5,
                   "rf": 0.2858,
-                  "lstm": 0.4865,
+                  "lstm": 0.4864,
                   "random": 0.7669,
                   "pair": 0.1615
                 },
