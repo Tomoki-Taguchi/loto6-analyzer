@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-08-24T01:38:35.950012",
+  "last_updated": "2026-08-24T10:53:49.538260",
   "latest_round": 2130,
   "period_labels": [
     {
@@ -286241,7 +286241,7 @@
     {
       "predicted_round": 2131,
       "data_up_to_round": 2130,
-      "generated_at": "2026-08-24T01:38:35.950012",
+      "generated_at": "2026-08-24T10:53:49.538260",
       "actual": null,
       "verified": false,
       "predictions_by_period": {
