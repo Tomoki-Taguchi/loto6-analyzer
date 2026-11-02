@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-11-02T05:16:48.215676",
+  "last_updated": "2026-11-02T20:21:59.681020",
   "latest_round": 2150,
   "period_labels": [
     {
@@ -3842,7 +3842,7 @@
                 "consec": 0.9153,
                 "cycle": 1.0,
                 "rf": 0.3448,
-                "lstm": 0.589,
+                "lstm": 0.5889,
                 "random": 0.7863,
                 "pair": 0.6494
               },
@@ -39828,7 +39828,7 @@
               "monte_carlo_pct": 13.01
             },
             "21": {
-              "score": 0.7293,
+              "score": 0.7292,
               "top_factor": "freq",
               "reason_text": "全800回中128回出現（16.0%）と高い出現頻度を記録。中帯(15-29)。",
               "details": {
@@ -496957,7 +496957,7 @@
     {
       "predicted_round": 2151,
       "data_up_to_round": 2150,
-      "generated_at": "2026-11-02T05:16:48.215676",
+      "generated_at": "2026-11-02T20:21:59.681020",
       "actual": null,
       "verified": false,
       "predictions_by_period": {
@@ -503779,7 +503779,7 @@
                   "monte_carlo_pct": 13.01
                 },
                 "21": {
-                  "score": 0.7293,
+                  "score": 0.7292,
                   "top_factor": "freq",
                   "reason_text": "全800回中128回出現（16.0%）と高い出現頻度を記録。中帯(15-29)。",
                   "details": {
@@ -507051,7 +507051,7 @@
                     "consec": 0.9153,
                     "cycle": 1.0,
                     "rf": 0.3448,
-                    "lstm": 0.589,
+                    "lstm": 0.5889,
                     "random": 0.7863,
                     "pair": 0.6494
                   },
